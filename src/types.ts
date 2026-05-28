@@ -34,6 +34,10 @@ export type Anchor = (typeof ANCHORS)[number];
 
 export type Vec2 = [number, number];
 
+export const SNAP_MODES = ["canvas", "padding", "none"] as const;
+
+export type SnapMode = (typeof SNAP_MODES)[number];
+
 export interface ComponentState {
   condition: string;
   style_token: string;
@@ -61,7 +65,7 @@ export interface UIComponent {
   size: Vec2;
   size_unit?: "px" | "percent";
   size_percent?: Vec2;
-  snap_to_edges?: boolean;
+  snap_mode?: SnapMode;
   z_index: number;
   parent_id?: string;
   style_token: string;

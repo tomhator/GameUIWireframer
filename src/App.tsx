@@ -36,7 +36,16 @@ import {
   defaultTokens,
   sampleDesign,
 } from "./sampleData";
-import { ANCHORS, COMPONENT_TYPES, type ComponentType, type DesignDocument, type TokenDocument, type UIComponent } from "./types";
+import {
+  ANCHORS,
+  COMPONENT_TYPES,
+  SNAP_MODES,
+  type ComponentType,
+  type DesignDocument,
+  type SnapMode,
+  type TokenDocument,
+  type UIComponent,
+} from "./types";
 
 const componentIcons: Record<ComponentType, LucideIcon> = {
   Panel: PanelTop,
@@ -104,12 +113,6 @@ export default function App() {
   const [baseWidth, baseHeight] = design.base_resolution;
   const tokenStyle = useMemo(() => buildTokenStyle(tokens), [tokens]);
   const sortedComponents = useMemo(() => sortComponentsForCanvas(design.components), [design.components]);
-  const childComponentsByParent = useMemo(() => buildChildComponentMap(sortedComponents), [sortedComponents]);
-  const componentIds = useMemo(() => new Set(design.components.map((component) => component.id)), [design.components]);
-  const rootComponents = useMemo(
-    () => sortedComponents.filter((component) => !component.parent_id || !componentIds.has(component.parent_id)),
-    [componentIds, sortedComponents],
-  );
   const listComponents = useMemo(() => orderComponentsForList(design.components), [design.components]);
 
   const scale = useMemo(() => {
@@ -144,18 +147,16 @@ export default function App() {
         ...current,
         components: current.components.map((component) => {
           if (component.id !== canvasEdit.id) return component;
-          const edgeSnap = component.snap_to_edges ?? true;
-          const editContext = getComponentEditContext(component, current.components, current.base_resolution);
-          const localPoint = getLocalPoint(point, editContext.origin);
+          const snapMode = component.snap_mode ?? "canvas";
 
           if (canvasEdit.mode === "move") {
-            const bounds = getMoveBounds(component.size, editContext.size, edgeSnap);
-            const nextX = clamp(Math.round(localPoint.x - canvasEdit.offsetX), bounds.minX, bounds.maxX);
-            const nextY = clamp(Math.round(localPoint.y - canvasEdit.offsetY), bounds.minY, bounds.maxY);
+            const bounds = getMoveBounds(component.size, current.base_resolution, snapMode, current.safe_area);
+            const nextX = clamp(Math.round(point.x - canvasEdit.offsetX), bounds.minX, bounds.maxX);
+            const nextY = clamp(Math.round(point.y - canvasEdit.offsetY), bounds.minY, bounds.maxY);
             return { ...component, position: [nextX, nextY] };
           }
 
-          const resized = getResizedFrame(canvasEdit, localPoint, editContext.size, edgeSnap);
+          const resized = getResizedFrame(canvasEdit, point, current.base_resolution, snapMode, current.safe_area);
           return {
             ...component,
             position: resized.position,
@@ -268,10 +269,10 @@ export default function App() {
     }));
   }
 
-  function updateSnapToEdges(enabled: boolean) {
+  function updateSnapMode(mode: SnapMode) {
     updateSelected((component) => ({
       ...component,
-      snap_to_edges: enabled,
+      snap_mode: mode,
     }));
   }
 
@@ -318,12 +319,11 @@ export default function App() {
     setSelectedId(component.id);
     const point = getCanvasPoint(event);
     if (!point) return;
-    const localPoint = getLocalPointForComponent(point, component, design.components);
     setCanvasEdit({
       mode: "move",
       id: component.id,
-      offsetX: localPoint.x - component.position[0],
-      offsetY: localPoint.y - component.position[1],
+      offsetX: point.x - component.position[0],
+      offsetY: point.y - component.position[1],
     });
   }
 
@@ -332,12 +332,11 @@ export default function App() {
     setSelectedId(component.id);
     const point = getCanvasPoint(event);
     if (!point) return;
-    const localPoint = getLocalPointForComponent(point, component, design.components);
     setCanvasEdit({
       mode: "resize",
       id: component.id,
       handle,
-      startPoint: localPoint,
+      startPoint: point,
       startPosition: component.position,
       startSize: component.size,
     });
@@ -349,20 +348,7 @@ export default function App() {
     setDesign((current) => ({
       ...current,
       components: current.components
-        .map((component) => {
-          if (component.parent_id !== deletedId) return component;
-          const absolutePosition = getComponentAbsolutePosition(component, current.components);
-          const bounds = getMoveBounds(component.size, current.base_resolution, component.snap_to_edges ?? true);
-          const nextPosition: [number, number] = [
-            clamp(absolutePosition[0], bounds.minX, bounds.maxX),
-            clamp(absolutePosition[1], bounds.minY, bounds.maxY),
-          ];
-          return {
-            ...component,
-            parent_id: undefined,
-            position: nextPosition,
-          };
-        })
+        .map((component) => (component.parent_id === deletedId ? { ...component, parent_id: undefined } : component))
         .filter((component) => component.id !== deletedId),
     }));
     setSelectedId(null);
@@ -387,24 +373,14 @@ export default function App() {
     setDesign((current) => {
       const component = current.components.find((item) => item.id === componentId);
       if (!component) return current;
-      if (parentId && !canNestUnder(componentId, parentId, current.components)) return current;
+      if (parentId && !canUseAsParent(componentId, parentId, current.components)) return current;
       const nextParentId = parentId || undefined;
       if (component.parent_id === nextParentId) return current;
-
-      const absolutePosition = getComponentAbsolutePosition(component, current.components);
-      const nextParent = nextParentId ? current.components.find((item) => item.id === nextParentId) : null;
-      const nextPosition = nextParent
-        ? clampPositionInside(
-            subtractPosition(absolutePosition, getComponentAbsolutePosition(nextParent, current.components)),
-            component.size,
-            nextParent.size,
-          )
-        : clampPositionToContainer(absolutePosition, component.size, current.base_resolution, component.snap_to_edges ?? true);
 
       return {
         ...current,
         components: current.components.map((item) =>
-          item.id === componentId ? { ...item, parent_id: nextParentId, position: nextPosition } : item,
+          item.id === componentId ? { ...item, parent_id: nextParentId } : item,
         ),
       };
     });
@@ -412,6 +388,10 @@ export default function App() {
 
   function nestDraggedComponent(targetId: string) {
     if (!componentDragId || componentDragId === targetId) return;
+    if (!canUseAsParent(componentDragId, targetId, design.components)) {
+      setComponentDragId(null);
+      return;
+    }
     updateComponentParent(componentDragId, targetId);
     setComponentDragId(null);
   }
@@ -583,15 +563,14 @@ export default function App() {
                     bottom: design.safe_area,
                   }}
                 />
-                {rootComponents.map((component) => (
+                {sortedComponents.map((component) => (
                   <WireframeComponent
                     key={component.id}
                     component={component}
-                    childrenByParent={childComponentsByParent}
                     tokens={tokens}
-                    selectedId={selectedId}
-                    onPointerDown={handleComponentPointerDown}
-                    onResizePointerDown={handleResizePointerDown}
+                    selected={component.id === selectedId}
+                    onPointerDown={(event) => handleComponentPointerDown(event, component)}
+                    onResizePointerDown={(event, handle) => handleResizePointerDown(event, component, handle)}
                   />
                 ))}
               </div>
@@ -651,13 +630,15 @@ export default function App() {
                 </select>
               </label>
 
-              <label className="check-field">
-                <input
-                  type="checkbox"
-                  checked={selectedComponent.snap_to_edges ?? true}
-                  onChange={(event) => updateSnapToEdges(event.target.checked)}
-                />
-                <span>snap this component to {selectedComponent.parent_id ? "parent" : "canvas"} edges</span>
+              <label className="field">
+                <span>snap mode</span>
+                <select value={selectedComponent.snap_mode ?? "canvas"} onChange={(event) => updateSnapMode(event.target.value as SnapMode)}>
+                  {SNAP_MODES.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {mode}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <div className="field-grid">
@@ -711,7 +692,7 @@ export default function App() {
                 >
                   <option value="">none</option>
                   {design.components
-                    .filter((component) => canNestUnder(selectedComponent.id, component.id, design.components))
+                    .filter((component) => canUseAsParent(selectedComponent.id, component.id, design.components))
                     .map((component) => (
                       <option key={component.id} value={component.id}>
                         {component.id}
@@ -760,34 +741,22 @@ export default function App() {
 
 function WireframeComponent({
   component,
-  childrenByParent,
   tokens,
-  selectedId,
+  selected,
   onPointerDown,
   onResizePointerDown,
-  visited = new Set<string>(),
 }: {
   component: UIComponent;
-  childrenByParent: Map<string, UIComponent[]>;
   tokens: TokenDocument;
-  selectedId: string | null;
-  onPointerDown: (event: React.PointerEvent, component: UIComponent) => void;
-  onResizePointerDown: (event: React.PointerEvent, component: UIComponent, handle: ResizeHandle) => void;
-  visited?: Set<string>;
+  selected: boolean;
+  onPointerDown: (event: React.PointerEvent) => void;
+  onResizePointerDown: (event: React.PointerEvent, handle: ResizeHandle) => void;
 }) {
   const Icon = componentIcons[component.type];
   const accent = getComponentAccent(tokens, component);
-  const selected = component.id === selectedId;
-  const nextVisited = new Set(visited);
-  nextVisited.add(component.id);
-  const children = (childrenByParent.get(component.id) ?? []).filter((child) => !nextVisited.has(child.id));
-  const hasSelectedDescendant = selectedId ? hasComponentDescendant(component.id, selectedId, childrenByParent) : false;
-
   return (
     <div
-      className={`wire-component wire-${component.type.toLowerCase()}${selected ? " is-selected" : ""}${
-        hasSelectedDescendant ? " has-selected-descendant" : ""
-      }`}
+      className={`wire-component wire-${component.type.toLowerCase()}${selected ? " is-selected" : ""}`}
       style={{
         left: component.position[0],
         top: component.position[1],
@@ -796,7 +765,7 @@ function WireframeComponent({
         zIndex: component.z_index,
         "--component-accent": accent,
       } as CSSProperties}
-      onPointerDown={(event) => onPointerDown(event, component)}
+      onPointerDown={onPointerDown}
       title={`${component.id} / ${component.type}`}
     >
       <div className="wire-header">
@@ -805,25 +774,13 @@ function WireframeComponent({
       </div>
       {renderComponentBody(component)}
       <div className="wire-id">{component.id}</div>
-      {children.map((child) => (
-        <WireframeComponent
-          key={child.id}
-          component={child}
-          childrenByParent={childrenByParent}
-          tokens={tokens}
-          selectedId={selectedId}
-          onPointerDown={onPointerDown}
-          onResizePointerDown={onResizePointerDown}
-          visited={nextVisited}
-        />
-      ))}
       {selected
         ? RESIZE_HANDLES.map((handle) => (
             <span
               aria-hidden="true"
               className={`resize-handle resize-${handle}`}
               key={handle}
-              onPointerDown={(event) => onResizePointerDown(event, component, handle)}
+              onPointerDown={(event) => onResizePointerDown(event, handle)}
             />
           ))
         : null}
@@ -989,18 +946,20 @@ function ComponentListItem({
         <span className="component-list-id">{component.id}</span>
         <span className="component-list-type">{component.type}</span>
       </button>
-      <div className="component-drop-row">
-        <button
-          type="button"
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => {
-            event.preventDefault();
-            onNestDrop();
-          }}
-        >
-          Nest
-        </button>
-      </div>
+      {component.type === "Panel" ? (
+        <div className="component-drop-row">
+          <button
+            type="button"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              onNestDrop();
+            }}
+          >
+            Nest
+          </button>
+        </div>
+      ) : null}
       <div className="component-list-controls">
         <select
           aria-label={`${component.id} parent`}
@@ -1009,7 +968,7 @@ function ComponentListItem({
         >
           <option value="">parent none</option>
           {components
-            .filter((item) => canNestUnder(component.id, item.id, components))
+            .filter((item) => canUseAsParent(component.id, item.id, components))
             .map((item) => (
               <option key={item.id} value={item.id}>
                 {item.id}
@@ -1191,96 +1150,19 @@ function orderComponentsForList(components: UIComponent[]): UIComponent[] {
   return ordered;
 }
 
-function getComponentEditContext(
-  component: UIComponent,
-  components: UIComponent[],
+function getMoveBounds(
+  size: [number, number],
   baseResolution: [number, number],
-): { origin: [number, number]; size: [number, number] } {
-  const parent = component.parent_id ? components.find((item) => item.id === component.parent_id) : undefined;
-  if (!parent) return { origin: [0, 0], size: baseResolution };
-  return {
-    origin: getComponentAbsolutePosition(parent, components),
-    size: parent.size,
-  };
-}
-
-function getLocalPoint(point: CanvasPoint, origin: [number, number]): CanvasPoint {
-  return {
-    x: point.x - origin[0],
-    y: point.y - origin[1],
-  };
-}
-
-function getLocalPointForComponent(point: CanvasPoint, component: UIComponent, components: UIComponent[]): CanvasPoint {
-  const parentOrigin = getComponentEditContext(component, components, [0, 0]).origin;
-  return getLocalPoint(point, parentOrigin);
-}
-
-function getComponentAbsolutePosition(component: UIComponent, components: UIComponent[]): [number, number] {
-  let x = component.position[0];
-  let y = component.position[1];
-  let parentId = component.parent_id;
-  const visited = new Set<string>([component.id]);
-
-  while (parentId && !visited.has(parentId)) {
-    const parent = components.find((item) => item.id === parentId);
-    if (!parent) break;
-    x += parent.position[0];
-    y += parent.position[1];
-    visited.add(parent.id);
-    parentId = parent.parent_id;
-  }
-
-  return [x, y];
-}
-
-function subtractPosition(position: [number, number], origin: [number, number]): [number, number] {
-  return [position[0] - origin[0], position[1] - origin[1]];
-}
-
-function clampPositionInside(
-  position: [number, number],
-  size: [number, number],
-  containerSize: [number, number],
-): [number, number] {
-  return [
-    clamp(Math.round(position[0]), 0, Math.max(0, containerSize[0] - size[0])),
-    clamp(Math.round(position[1]), 0, Math.max(0, containerSize[1] - size[1])),
-  ];
-}
-
-function clampPositionToContainer(
-  position: [number, number],
-  size: [number, number],
-  containerSize: [number, number],
-  edgeSnap: boolean,
-): [number, number] {
-  const bounds = getMoveBounds(size, containerSize, edgeSnap);
-  return [
-    clamp(Math.round(position[0]), bounds.minX, bounds.maxX),
-    clamp(Math.round(position[1]), bounds.minY, bounds.maxY),
-  ];
-}
-
-function hasComponentDescendant(
-  parentId: string,
-  targetId: string,
-  childMap: Map<string, UIComponent[]>,
-  visited = new Set<string>(),
-): boolean {
-  if (visited.has(parentId)) return false;
-  visited.add(parentId);
-  const children = childMap.get(parentId) ?? [];
-  return children.some((child) => child.id === targetId || hasComponentDescendant(child.id, targetId, childMap, visited));
-}
-
-function getMoveBounds(size: [number, number], baseResolution: [number, number], edgeSnap: boolean) {
-  if (edgeSnap) {
+  snapMode: SnapMode,
+  safeArea: number,
+) {
+  const limits = getSnapFrameLimits(baseResolution, snapMode, safeArea);
+  if (limits) {
     return {
-      minX: 0,
-      minY: 0,
-      maxX: Math.max(0, baseResolution[0] - size[0]),
-      maxY: Math.max(0, baseResolution[1] - size[1]),
+      minX: limits.minX,
+      minY: limits.minY,
+      maxX: Math.max(limits.minX, limits.maxX - size[0]),
+      maxY: Math.max(limits.minY, limits.maxY - size[1]),
     };
   }
 
@@ -1292,13 +1174,39 @@ function getMoveBounds(size: [number, number], baseResolution: [number, number],
   };
 }
 
+function getSnapFrameLimits(
+  baseResolution: [number, number],
+  snapMode: SnapMode,
+  safeArea: number,
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  if (snapMode === "none") return null;
+  if (snapMode === "padding") {
+    const inset = clamp(Math.round(safeArea), 0, getMaxSafeArea(baseResolution));
+    return {
+      minX: inset,
+      minY: inset,
+      maxX: Math.max(inset, baseResolution[0] - inset),
+      maxY: Math.max(inset, baseResolution[1] - inset),
+    };
+  }
+
+  return {
+    minX: 0,
+    minY: 0,
+    maxX: baseResolution[0],
+    maxY: baseResolution[1],
+  };
+}
+
 function getResizedFrame(
   state: ResizeState,
   point: CanvasPoint,
   baseResolution: [number, number],
-  edgeSnap: boolean,
+  snapMode: SnapMode,
+  safeArea: number,
 ): { position: [number, number]; size: [number, number] } {
   const minSize = 8;
+  const limits = getSnapFrameLimits(baseResolution, snapMode, safeArea);
   const dx = point.x - state.startPoint.x;
   const dy = point.y - state.startPoint.y;
   let left = state.startPosition[0];
@@ -1321,19 +1229,19 @@ function getResizedFrame(
     else bottom = top + minSize;
   }
 
-  if (edgeSnap) {
-    left = clamp(left, 0, baseResolution[0] - minSize);
-    top = clamp(top, 0, baseResolution[1] - minSize);
-    right = clamp(right, left + minSize, baseResolution[0]);
-    bottom = clamp(bottom, top + minSize, baseResolution[1]);
+  if (limits) {
+    left = clamp(left, limits.minX, Math.max(limits.minX, limits.maxX - minSize));
+    top = clamp(top, limits.minY, Math.max(limits.minY, limits.maxY - minSize));
+    right = clamp(right, left + minSize, Math.max(left + minSize, limits.maxX));
+    bottom = clamp(bottom, top + minSize, Math.max(top + minSize, limits.maxY));
   }
 
-  let width = clamp(right - left, minSize, baseResolution[0] * 2);
-  let height = clamp(bottom - top, minSize, baseResolution[1] * 2);
+  let width = clamp(right - left, minSize, limits ? Math.max(minSize, limits.maxX - limits.minX) : baseResolution[0] * 2);
+  let height = clamp(bottom - top, minSize, limits ? Math.max(minSize, limits.maxY - limits.minY) : baseResolution[1] * 2);
   let x = Math.round(left);
   let y = Math.round(top);
 
-  if (!edgeSnap) {
+  if (!limits) {
     x = clamp(x, -width + 8, baseResolution[0] - 8);
     y = clamp(y, -height + 8, baseResolution[1] - 8);
   }
@@ -1385,6 +1293,11 @@ function canNestUnder(childId: string, parentId: string, components: UIComponent
   }
 
   return true;
+}
+
+function canUseAsParent(childId: string, parentId: string, components: UIComponent[]): boolean {
+  const parent = components.find((component) => component.id === parentId);
+  return parent?.type === "Panel" && canNestUnder(childId, parentId, components);
 }
 
 function getTokenColor(tokens: TokenDocument, key: string): string | null {

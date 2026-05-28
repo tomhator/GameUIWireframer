@@ -15,7 +15,7 @@ export function buildDesignYaml(design: DesignDocument): string {
         position: component.position,
         size: component.size,
         size_unit: component.size_unit ?? "px",
-        snap_to_edges: component.snap_to_edges ?? true,
+        snap_mode: component.snap_mode ?? "canvas",
         ...(component.size_unit === "percent"
           ? {
               size_percent: [
