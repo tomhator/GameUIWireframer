@@ -12,6 +12,7 @@ import {
   Map,
   MessageSquare,
   MousePointer2,
+  Moon,
   PanelTop,
   Plus,
   Rows3,
@@ -19,6 +20,7 @@ import {
   Shield,
   Square,
   SquareMousePointer,
+  Sun,
   Target,
   Wrench,
   X,
@@ -64,12 +66,15 @@ interface CanvasPoint {
   y: number;
 }
 
+type ThemeMode = "light" | "dark";
+
 export default function App() {
   const [design, setDesign] = useState<DesignDocument>(() => structuredClone(sampleDesign));
   const [selectedId, setSelectedId] = useState<string | null>("player_hp");
   const [componentIndex, setComponentIndex] = useState(sampleDesign.components.length + 1);
   const [canvasViewport, setCanvasViewport] = useState({ width: 1, height: 1 });
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [theme, setTheme] = useState<ThemeMode>("light");
 
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
   const selectedComponent = design.components.find((component) => component.id === selectedId) ?? null;
@@ -234,7 +239,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={theme}>
       <header className="topbar">
         <div className="topbar-group project-group">
           <Layers size={18} aria-hidden="true" />
@@ -262,6 +267,16 @@ export default function App() {
             onChange={(value) => updateResolution(1, value)}
           />
         </div>
+
+        <button
+          className="icon-button"
+          type="button"
+          onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
+          title={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
+          aria-label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}
+        >
+          {theme === "light" ? <Moon size={17} aria-hidden="true" /> : <Sun size={17} aria-hidden="true" />}
+        </button>
 
         <button className="primary-button" type="button" onClick={exportYamlFiles} title="Export YAML files">
           <Download size={17} aria-hidden="true" />

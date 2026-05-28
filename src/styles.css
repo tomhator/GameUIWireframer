@@ -137,6 +137,35 @@ button {
   color: #788496;
 }
 
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: 1px solid #303a49;
+  border-radius: 6px;
+  background: #10141b;
+  color: #d8e3f0;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.icon-button:hover {
+  border-color: #3e5672;
+  background: #1b2430;
+  color: #ffffff;
+}
+
+.icon-button:active {
+  transform: translateY(1px);
+}
+
 .workspace {
   display: grid;
   grid-template-columns: 248px minmax(420px, 1fr) 336px;
@@ -210,6 +239,7 @@ button {
 
 .palette-item:focus-visible,
 .primary-button:focus-visible,
+.icon-button:focus-visible,
 input:focus-visible,
 select:focus-visible {
   outline: 2px solid rgba(88, 166, 255, 0.75);
@@ -644,6 +674,186 @@ select:focus-visible {
   height: calc(100% - 42px);
   color: #8794a5;
   font-size: 13px;
+}
+
+.app-shell[data-theme="light"] {
+  color-scheme: light;
+  background: #f3f6fa;
+  color: #1f2937;
+}
+
+.app-shell[data-theme="light"] .topbar {
+  border-bottom-color: #d6dee9;
+  background: #ffffff;
+}
+
+.app-shell[data-theme="light"] .left-panel,
+.app-shell[data-theme="light"] .right-panel {
+  border-color: #d6dee9;
+  background: #f8fafc;
+}
+
+.app-shell[data-theme="light"] .panel-header,
+.app-shell[data-theme="light"] .canvas-toolbar {
+  border-bottom-color: #d6dee9;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+.app-shell[data-theme="light"] .canvas-panel {
+  background: #eef3f8;
+}
+
+.app-shell[data-theme="light"] .canvas-viewport {
+  background:
+    linear-gradient(rgba(69, 83, 103, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(69, 83, 103, 0.08) 1px, transparent 1px),
+    #e9eff6;
+}
+
+.app-shell[data-theme="light"] .canvas-frame {
+  box-shadow: 0 0 0 1px #b8c3d1, 0 18px 42px rgba(44, 61, 82, 0.18);
+}
+
+.app-shell[data-theme="light"] .canvas-surface {
+  background: #f9fbfe;
+}
+
+.app-shell[data-theme="light"] .screen-input,
+.app-shell[data-theme="light"] .resolution-input,
+.app-shell[data-theme="light"] .field input,
+.app-shell[data-theme="light"] .field select {
+  border-color: #c9d3df;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+.app-shell[data-theme="light"] .field input:disabled {
+  background: #eef2f7;
+  color: #778397;
+}
+
+.app-shell[data-theme="light"] .resolution-label,
+.app-shell[data-theme="light"] .resolution-separator,
+.app-shell[data-theme="light"] .field span,
+.app-shell[data-theme="light"] .section-title,
+.app-shell[data-theme="light"] .canvas-scale {
+  color: #5e6b7e;
+}
+
+.app-shell[data-theme="light"] .canvas-meta {
+  color: #334155;
+}
+
+.app-shell[data-theme="light"] .icon-button {
+  border-color: #c9d3df;
+  background: #ffffff;
+  color: #334155;
+}
+
+.app-shell[data-theme="light"] .icon-button:hover {
+  border-color: #98acc3;
+  background: #eef4fb;
+  color: #0f172a;
+}
+
+.app-shell[data-theme="light"] .palette-item {
+  border-color: #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+}
+
+.app-shell[data-theme="light"] .palette-item:hover {
+  border-color: #98acc3;
+  background: #edf5ff;
+  color: #172033;
+}
+
+.app-shell[data-theme="light"] .property-section {
+  border-top-color: #d6dee9;
+}
+
+.app-shell[data-theme="light"] .empty-properties {
+  color: #657386;
+}
+
+.app-shell[data-theme="light"] .safe-area {
+  border-color: rgba(225, 142, 24, 0.42);
+}
+
+.app-shell[data-theme="light"] .wire-component {
+  border-color: rgba(117, 132, 154, 0.85);
+  background: rgba(255, 255, 255, 0.96);
+  color: #1f2937;
+}
+
+.app-shell[data-theme="light"] .wire-component:hover {
+  border-color: #4f89c8;
+  background: #ffffff;
+}
+
+.app-shell[data-theme="light"] .wire-component.is-selected {
+  border-color: #1f75d6;
+  box-shadow: inset 0 0 0 2px rgba(31, 117, 214, 0.22), 0 0 0 2px rgba(31, 117, 214, 0.22);
+}
+
+.app-shell[data-theme="light"] .wire-header {
+  border-bottom-color: rgba(70, 83, 104, 0.18);
+  color: #172033;
+}
+
+.app-shell[data-theme="light"] .wire-id {
+  color: #657386;
+}
+
+.app-shell[data-theme="light"] .wire-progressbar .wire-id,
+.app-shell[data-theme="light"] .button-body {
+  color: #ffffff;
+}
+
+.app-shell[data-theme="light"] .progress-track {
+  background: rgba(80, 93, 111, 0.18);
+}
+
+.app-shell[data-theme="light"] .skill-cell,
+.app-shell[data-theme="light"] .tab-row span {
+  border-color: #cbd5e1;
+  background: #eef3f8;
+  color: #9b6500;
+}
+
+.app-shell[data-theme="light"] .tab-row .active-tab {
+  background: #2870b9;
+  color: #ffffff;
+}
+
+.app-shell[data-theme="light"] .inventory-grid span {
+  border-color: #cbd5e1;
+  background: #eef3f8;
+}
+
+.app-shell[data-theme="light"] .minimap-grid {
+  border-color: rgba(75, 88, 108, 0.24);
+  background:
+    linear-gradient(rgba(65, 79, 100, 0.13) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(65, 79, 100, 0.13) 1px, transparent 1px),
+    #dfeaf5;
+}
+
+.app-shell[data-theme="light"] .quest-lines span,
+.app-shell[data-theme="light"] .dialogue-lines span,
+.app-shell[data-theme="light"] .tooltip-line,
+.app-shell[data-theme="light"] .panel-body-line {
+  background: rgba(76, 89, 108, 0.22);
+}
+
+.app-shell[data-theme="light"] .dialogue-lines span:first-child {
+  background: #ca8500;
+}
+
+.app-shell[data-theme="light"] .modal-wire-body button {
+  background: #e6edf5;
+  color: #334155;
 }
 
 @media (max-width: 1180px) {
