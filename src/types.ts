@@ -59,7 +59,11 @@ export interface UIComponent {
   anchor: Anchor;
   position: Vec2;
   size: Vec2;
+  size_unit?: "px" | "percent";
+  size_percent?: Vec2;
   z_index: number;
+  parent_id?: string;
+  group_id?: string;
   style_token: string;
   data_binding: string;
   states: Record<string, ComponentState>;

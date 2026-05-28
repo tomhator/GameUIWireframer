@@ -22,6 +22,7 @@ import {
   SquareMousePointer,
   Sun,
   Target,
+  Trash2,
   Wrench,
   X,
   Zap,
@@ -35,7 +36,7 @@ import {
   defaultTokens,
   sampleDesign,
 } from "./sampleData";
-import { ANCHORS, COMPONENT_TYPES, type ComponentType, type DesignDocument, type UIComponent } from "./types";
+import { ANCHORS, COMPONENT_TYPES, type ComponentType, type DesignDocument, type TokenDocument, type UIComponent } from "./types";
 
 const componentIcons: Record<ComponentType, LucideIcon> = {
   Panel: PanelTop,
@@ -56,25 +57,45 @@ const componentIcons: Record<ComponentType, LucideIcon> = {
 };
 
 interface DragState {
+  mode: "move";
   id: string;
   offsetX: number;
   offsetY: number;
 }
+
+type ResizeHandle = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
+
+interface ResizeState {
+  mode: "resize";
+  id: string;
+  handle: ResizeHandle;
+  startPoint: CanvasPoint;
+  startPosition: [number, number];
+  startSize: [number, number];
+}
+
+type CanvasEditState = DragState | ResizeState;
+type ThemeMode = "light" | "dark";
+type RightPanelTab = "properties" | "tokens";
+type SizeUnit = "px" | "percent";
 
 interface CanvasPoint {
   x: number;
   y: number;
 }
 
-type ThemeMode = "light" | "dark";
+const RESIZE_HANDLES: ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
 export default function App() {
   const [design, setDesign] = useState<DesignDocument>(() => structuredClone(sampleDesign));
+  const [tokens, setTokens] = useState(() => structuredClone(defaultTokens));
   const [selectedId, setSelectedId] = useState<string | null>("player_hp");
   const [componentIndex, setComponentIndex] = useState(sampleDesign.components.length + 1);
   const [canvasViewport, setCanvasViewport] = useState({ width: 1, height: 1 });
-  const [drag, setDrag] = useState<DragState | null>(null);
+  const [canvasEdit, setCanvasEdit] = useState<CanvasEditState | null>(null);
   const [theme, setTheme] = useState<ThemeMode>("light");
+  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>("properties");
+  const [edgeSnap, setEdgeSnap] = useState(true);
 
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
   const selectedComponent = design.components.find((component) => component.id === selectedId) ?? null;
@@ -102,7 +123,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!drag) return;
+    if (!canvasEdit) return;
 
     const handlePointerMove = (event: PointerEvent) => {
       const point = getCanvasPoint(event);
@@ -111,15 +132,30 @@ export default function App() {
       setDesign((current) => ({
         ...current,
         components: current.components.map((component) => {
-          if (component.id !== drag.id) return component;
-          const nextX = clamp(Math.round(point.x - drag.offsetX), 0, current.base_resolution[0] - component.size[0]);
-          const nextY = clamp(Math.round(point.y - drag.offsetY), 0, current.base_resolution[1] - component.size[1]);
-          return { ...component, position: [nextX, nextY] };
+          if (component.id !== canvasEdit.id) return component;
+
+          if (canvasEdit.mode === "move") {
+            const bounds = getMoveBounds(component.size, current.base_resolution, edgeSnap);
+            const nextX = clamp(Math.round(point.x - canvasEdit.offsetX), bounds.minX, bounds.maxX);
+            const nextY = clamp(Math.round(point.y - canvasEdit.offsetY), bounds.minY, bounds.maxY);
+            return { ...component, position: [nextX, nextY] };
+          }
+
+          const resized = getResizedFrame(canvasEdit, point, current.base_resolution, edgeSnap);
+          return {
+            ...component,
+            position: resized.position,
+            size: resized.size,
+            size_percent:
+              component.size_unit === "percent"
+                ? sizeToPercent(resized.size, current.base_resolution)
+                : component.size_percent,
+          };
         }),
       }));
     };
 
-    const handlePointerUp = () => setDrag(null);
+    const handlePointerUp = () => setCanvasEdit(null);
 
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
@@ -127,7 +163,7 @@ export default function App() {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [drag, scale]);
+  }, [canvasEdit, edgeSnap, scale]);
 
   function getCanvasPoint(event: PointerEvent | React.PointerEvent): CanvasPoint | null {
     const node = canvasViewportRef.current;
@@ -169,6 +205,9 @@ export default function App() {
     setDesign((current) => ({
       ...current,
       components: current.components.map((component) => {
+        if (component.parent_id === previousId) {
+          return { ...component, parent_id: nextId };
+        }
         if (component.id !== previousId) return component;
         return {
           ...component,
@@ -194,9 +233,25 @@ export default function App() {
   function updateSize(axis: 0 | 1, value: number) {
     updateSelected((component) => {
       const nextSize: [number, number] = [...component.size];
-      nextSize[axis] = Math.max(8, value);
-      return { ...component, size: nextSize };
+      const nextValue =
+        (component.size_unit ?? "px") === "percent"
+          ? Math.round((Math.max(1, value) / 100) * design.base_resolution[axis])
+          : value;
+      nextSize[axis] = Math.max(8, nextValue);
+      return {
+        ...component,
+        size: nextSize,
+        size_percent: component.size_unit === "percent" ? sizeToPercent(nextSize, design.base_resolution) : component.size_percent,
+      };
     });
+  }
+
+  function updateSizeUnit(unit: SizeUnit) {
+    updateSelected((component) => ({
+      ...component,
+      size_unit: unit,
+      size_percent: unit === "percent" ? sizeToPercent(component.size, design.base_resolution) : undefined,
+    }));
   }
 
   function updatePrimaryInteraction(field: "action" | "keyboard_input" | "gamepad_input", value: string) {
@@ -222,7 +277,7 @@ export default function App() {
 
   function exportYamlFiles() {
     downloadTextFile("design.yaml", buildDesignYaml(design));
-    downloadTextFile("tokens.yaml", buildTokensYaml(defaultTokens));
+    downloadTextFile("tokens.yaml", buildTokensYaml(tokens));
     downloadTextFile("flows.yaml", buildFlowsYaml(design, defaultFlowDocument));
   }
 
@@ -231,10 +286,53 @@ export default function App() {
     setSelectedId(component.id);
     const point = getCanvasPoint(event);
     if (!point) return;
-    setDrag({
+    setCanvasEdit({
+      mode: "move",
       id: component.id,
       offsetX: point.x - component.position[0],
       offsetY: point.y - component.position[1],
+    });
+  }
+
+  function handleResizePointerDown(event: React.PointerEvent, component: UIComponent, handle: ResizeHandle) {
+    event.stopPropagation();
+    setSelectedId(component.id);
+    const point = getCanvasPoint(event);
+    if (!point) return;
+    setCanvasEdit({
+      mode: "resize",
+      id: component.id,
+      handle,
+      startPoint: point,
+      startPosition: component.position,
+      startSize: component.size,
+    });
+  }
+
+  function deleteSelectedComponent() {
+    if (!selectedComponent) return;
+    const deletedId = selectedComponent.id;
+    setDesign((current) => ({
+      ...current,
+      components: current.components
+        .filter((component) => component.id !== deletedId)
+        .map((component) => (component.parent_id === deletedId ? { ...component, parent_id: undefined } : component)),
+    }));
+    setSelectedId(null);
+  }
+
+  function updateTokenValue(category: keyof typeof tokens, key: string, value: string) {
+    setTokens((current) => {
+      const section = current[category];
+      const previousValue = section[key as keyof typeof section];
+      const nextValue = typeof previousValue === "number" ? Number(value) : value;
+      return {
+        ...current,
+        [category]: {
+          ...section,
+          [key]: Number.isNaN(nextValue) ? 0 : nextValue,
+        },
+      };
     });
   }
 
@@ -269,6 +367,16 @@ export default function App() {
         </div>
 
         <button
+          className={`toggle-button${edgeSnap ? " is-active" : ""}`}
+          type="button"
+          aria-pressed={edgeSnap}
+          onClick={() => setEdgeSnap((value) => !value)}
+          title="Toggle edge snap"
+        >
+          Snap
+        </button>
+
+        <button
           className="icon-button"
           type="button"
           onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
@@ -286,28 +394,71 @@ export default function App() {
 
       <main className="workspace">
         <aside className="left-panel">
-          <div className="panel-header">
-            <Box size={17} aria-hidden="true" />
-            <span>Palette</span>
-          </div>
-          <div className="palette-list">
-            {COMPONENT_TYPES.map((type) => {
-              const Icon = componentIcons[type];
-              return (
-                <button
-                  className="palette-item"
-                  key={type}
-                  type="button"
-                  onClick={() => addComponent(type)}
-                  title={`Add ${type}`}
-                >
-                  <Icon size={17} aria-hidden="true" />
-                  <span>{type}</span>
-                  <Plus size={14} aria-hidden="true" />
-                </button>
-              );
-            })}
-          </div>
+          <section className="panel-section">
+            <div className="panel-header">
+              <Box size={17} aria-hidden="true" />
+              <span>Palette</span>
+            </div>
+            <div className="palette-list">
+              {COMPONENT_TYPES.map((type) => {
+                const Icon = componentIcons[type];
+                return (
+                  <button
+                    className="palette-item"
+                    key={type}
+                    type="button"
+                    onClick={() => addComponent(type)}
+                    title={`Add ${type}`}
+                  >
+                    <Icon size={17} aria-hidden="true" />
+                    <span>{type}</span>
+                    <Plus size={14} aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="panel-section">
+            <div className="panel-header">
+              <ListChecks size={17} aria-hidden="true" />
+              <span>Components</span>
+            </div>
+            <div className="component-list">
+              {design.components
+                .slice()
+                .sort((a, b) => a.z_index - b.z_index)
+                .map((component) => (
+                  <ComponentListItem
+                    key={component.id}
+                    component={component}
+                    components={design.components}
+                    depth={componentDepth(component, design.components)}
+                    selected={component.id === selectedId}
+                    onSelect={() => {
+                      setSelectedId(component.id);
+                      setRightPanelTab("properties");
+                    }}
+                    onParentChange={(parentId) =>
+                      setDesign((current) => ({
+                        ...current,
+                        components: current.components.map((item) =>
+                          item.id === component.id ? { ...item, parent_id: parentId || undefined } : item,
+                        ),
+                      }))
+                    }
+                    onGroupChange={(groupId) =>
+                      setDesign((current) => ({
+                        ...current,
+                        components: current.components.map((item) =>
+                          item.id === component.id ? { ...item, group_id: groupId || undefined } : item,
+                        ),
+                      }))
+                    }
+                  />
+                ))}
+            </div>
+          </section>
         </aside>
 
         <section className="canvas-panel" aria-label="Canvas editor">
@@ -324,7 +475,7 @@ export default function App() {
             ref={canvasViewportRef}
             onPointerDown={() => {
               setSelectedId(null);
-              setDrag(null);
+              setCanvasEdit(null);
             }}
           >
             <div
@@ -360,6 +511,7 @@ export default function App() {
                       component={component}
                       selected={component.id === selectedId}
                       onPointerDown={(event) => handleComponentPointerDown(event, component)}
+                      onResizePointerDown={(event, handle) => handleResizePointerDown(event, component, handle)}
                     />
                   ))}
               </div>
@@ -368,13 +520,41 @@ export default function App() {
         </section>
 
         <aside className="right-panel">
-          <div className="panel-header">
-            <Settings2 size={17} aria-hidden="true" />
-            <span>Properties</span>
+          <div className="panel-header tabbed-header">
+            <div className="panel-title">
+              {rightPanelTab === "properties" ? <Settings2 size={17} aria-hidden="true" /> : <Wrench size={17} aria-hidden="true" />}
+              <span>{rightPanelTab === "properties" ? "Properties" : "Tokens"}</span>
+            </div>
+            <div className="panel-tabs" role="tablist" aria-label="Inspector panels">
+              <button
+                className={rightPanelTab === "properties" ? "is-active" : ""}
+                type="button"
+                role="tab"
+                aria-selected={rightPanelTab === "properties"}
+                onClick={() => setRightPanelTab("properties")}
+              >
+                Props
+              </button>
+              <button
+                className={rightPanelTab === "tokens" ? "is-active" : ""}
+                type="button"
+                role="tab"
+                aria-selected={rightPanelTab === "tokens"}
+                onClick={() => setRightPanelTab("tokens")}
+              >
+                Tokens
+              </button>
+            </div>
           </div>
 
-          {selectedComponent ? (
+          {rightPanelTab === "tokens" ? (
+            <TokenEditor tokens={tokens} onChange={updateTokenValue} />
+          ) : selectedComponent ? (
             <div className="property-list">
+              <button className="danger-button" type="button" onClick={deleteSelectedComponent}>
+                <Trash2 size={16} aria-hidden="true" />
+                <span>Delete component</span>
+              </button>
               <TextInput label="id" value={selectedComponent.id} onChange={updateSelectedId} />
               <ReadOnlyField label="type" value={selectedComponent.type} />
               <TextInput
@@ -383,11 +563,29 @@ export default function App() {
                 onChange={(value) => updateSelected((component) => ({ ...component, label: value }))}
               />
 
+              <label className="field">
+                <span>size unit</span>
+                <select value={selectedComponent.size_unit ?? "px"} onChange={(event) => updateSizeUnit(event.target.value as SizeUnit)}>
+                  <option value="px">px</option>
+                  <option value="percent">%</option>
+                </select>
+              </label>
+
               <div className="field-grid">
                 <NumberInput label="x" value={selectedComponent.position[0]} onChange={(value) => updatePosition(0, value)} />
                 <NumberInput label="y" value={selectedComponent.position[1]} onChange={(value) => updatePosition(1, value)} />
-                <NumberInput label="width" value={selectedComponent.size[0]} min={8} onChange={(value) => updateSize(0, value)} />
-                <NumberInput label="height" value={selectedComponent.size[1]} min={8} onChange={(value) => updateSize(1, value)} />
+                <NumberInput
+                  label={`width (${selectedComponent.size_unit === "percent" ? "%" : "px"})`}
+                  value={displaySizeValue(selectedComponent, 0, design.base_resolution)}
+                  min={selectedComponent.size_unit === "percent" ? 1 : 8}
+                  onChange={(value) => updateSize(0, value)}
+                />
+                <NumberInput
+                  label={`height (${selectedComponent.size_unit === "percent" ? "%" : "px"})`}
+                  value={displaySizeValue(selectedComponent, 1, design.base_resolution)}
+                  min={selectedComponent.size_unit === "percent" ? 1 : 8}
+                  onChange={(value) => updateSize(1, value)}
+                />
               </div>
 
               <label className="field">
@@ -416,6 +614,29 @@ export default function App() {
                 value={selectedComponent.style_token}
                 onChange={(value) => updateSelected((component) => ({ ...component, style_token: value }))}
               />
+              <TextInput
+                label="group_id"
+                value={selectedComponent.group_id ?? ""}
+                onChange={(value) => updateSelected((component) => ({ ...component, group_id: value || undefined }))}
+              />
+              <label className="field">
+                <span>parent_id</span>
+                <select
+                  value={selectedComponent.parent_id ?? ""}
+                  onChange={(event) =>
+                    updateSelected((component) => ({ ...component, parent_id: event.target.value || undefined }))
+                  }
+                >
+                  <option value="">none</option>
+                  {design.components
+                    .filter((component) => component.id !== selectedComponent.id)
+                    .map((component) => (
+                      <option key={component.id} value={component.id}>
+                        {component.id}
+                      </option>
+                    ))}
+                </select>
+              </label>
               <NumberInput
                 label="z_index"
                 value={selectedComponent.z_index}
@@ -459,10 +680,12 @@ function WireframeComponent({
   component,
   selected,
   onPointerDown,
+  onResizePointerDown,
 }: {
   component: UIComponent;
   selected: boolean;
   onPointerDown: (event: React.PointerEvent) => void;
+  onResizePointerDown: (event: React.PointerEvent, handle: ResizeHandle) => void;
 }) {
   const Icon = componentIcons[component.type];
   return (
@@ -484,6 +707,16 @@ function WireframeComponent({
       </div>
       {renderComponentBody(component)}
       <div className="wire-id">{component.id}</div>
+      {selected
+        ? RESIZE_HANDLES.map((handle) => (
+            <span
+              aria-hidden="true"
+              className={`resize-handle resize-${handle}`}
+              key={handle}
+              onPointerDown={(event) => onResizePointerDown(event, handle)}
+            />
+          ))
+        : null}
     </div>
   );
 }
@@ -607,6 +840,85 @@ function renderComponentBody(component: UIComponent) {
   return <div className="panel-body-line" />;
 }
 
+function ComponentListItem({
+  component,
+  components,
+  depth,
+  selected,
+  onSelect,
+  onParentChange,
+  onGroupChange,
+}: {
+  component: UIComponent;
+  components: UIComponent[];
+  depth: number;
+  selected: boolean;
+  onSelect: () => void;
+  onParentChange: (parentId: string) => void;
+  onGroupChange: (groupId: string) => void;
+}) {
+  return (
+    <div className={`component-list-item${selected ? " is-selected" : ""}`} style={{ paddingLeft: 8 + depth * 12 }}>
+      <button className="component-select-button" type="button" onClick={onSelect} title={`Select ${component.id}`}>
+        <span className="component-list-id">{component.id}</span>
+        <span className="component-list-type">{component.type}</span>
+      </button>
+      <div className="component-list-controls">
+        <select
+          aria-label={`${component.id} parent`}
+          value={component.parent_id ?? ""}
+          onChange={(event) => onParentChange(event.target.value)}
+        >
+          <option value="">parent none</option>
+          {components
+            .filter((item) => item.id !== component.id)
+            .map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.id}
+              </option>
+            ))}
+        </select>
+        <input
+          aria-label={`${component.id} group`}
+          placeholder="group"
+          value={component.group_id ?? ""}
+          onChange={(event) => onGroupChange(event.target.value)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TokenEditor({
+  tokens,
+  onChange,
+}: {
+  tokens: TokenDocument;
+  onChange: (category: keyof TokenDocument, key: string, value: string) => void;
+}) {
+  const categories = Object.entries(tokens) as Array<[keyof TokenDocument, Record<string, string | number>]>;
+
+  return (
+    <div className="token-editor">
+      {categories.map(([category, values]) => (
+        <section className="token-section" key={category}>
+          <div className="section-title">{category}</div>
+          {Object.entries(values).map(([key, value]) => (
+            <label className="token-row" key={key}>
+              <span>{key}</span>
+              <input
+                type={typeof value === "number" ? "number" : "text"}
+                value={String(value)}
+                onChange={(event) => onChange(category, key, event.target.value)}
+              />
+            </label>
+          ))}
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function TextInput({
   label,
   value,
@@ -704,4 +1016,102 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function getMoveBounds(size: [number, number], baseResolution: [number, number], edgeSnap: boolean) {
+  if (edgeSnap) {
+    return {
+      minX: 0,
+      minY: 0,
+      maxX: baseResolution[0] - size[0],
+      maxY: baseResolution[1] - size[1],
+    };
+  }
+
+  return {
+    minX: -size[0] + 8,
+    minY: -size[1] + 8,
+    maxX: baseResolution[0] - 8,
+    maxY: baseResolution[1] - 8,
+  };
+}
+
+function getResizedFrame(
+  state: ResizeState,
+  point: CanvasPoint,
+  baseResolution: [number, number],
+  edgeSnap: boolean,
+): { position: [number, number]; size: [number, number] } {
+  const minSize = 8;
+  const dx = point.x - state.startPoint.x;
+  const dy = point.y - state.startPoint.y;
+  let left = state.startPosition[0];
+  let top = state.startPosition[1];
+  let right = state.startPosition[0] + state.startSize[0];
+  let bottom = state.startPosition[1] + state.startSize[1];
+
+  if (state.handle.includes("w")) left += dx;
+  if (state.handle.includes("e")) right += dx;
+  if (state.handle.includes("n")) top += dy;
+  if (state.handle.includes("s")) bottom += dy;
+
+  if (right - left < minSize) {
+    if (state.handle.includes("w")) left = right - minSize;
+    else right = left + minSize;
+  }
+
+  if (bottom - top < minSize) {
+    if (state.handle.includes("n")) top = bottom - minSize;
+    else bottom = top + minSize;
+  }
+
+  if (edgeSnap) {
+    left = clamp(left, 0, baseResolution[0] - minSize);
+    top = clamp(top, 0, baseResolution[1] - minSize);
+    right = clamp(right, left + minSize, baseResolution[0]);
+    bottom = clamp(bottom, top + minSize, baseResolution[1]);
+  }
+
+  let width = clamp(right - left, minSize, baseResolution[0] * 2);
+  let height = clamp(bottom - top, minSize, baseResolution[1] * 2);
+  let x = Math.round(left);
+  let y = Math.round(top);
+
+  if (!edgeSnap) {
+    x = clamp(x, -width + 8, baseResolution[0] - 8);
+    y = clamp(y, -height + 8, baseResolution[1] - 8);
+  }
+
+  width = Math.round(width);
+  height = Math.round(height);
+  return { position: [x, y], size: [width, height] };
+}
+
+function sizeToPercent(size: [number, number], baseResolution: [number, number]): [number, number] {
+  return [roundToTwo((size[0] / baseResolution[0]) * 100), roundToTwo((size[1] / baseResolution[1]) * 100)];
+}
+
+function displaySizeValue(component: UIComponent, axis: 0 | 1, baseResolution: [number, number]): number {
+  if ((component.size_unit ?? "px") !== "percent") return component.size[axis];
+  return roundToTwo((component.size[axis] / baseResolution[axis]) * 100);
+}
+
+function roundToTwo(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function componentDepth(component: UIComponent, components: UIComponent[]): number {
+  let depth = 0;
+  let parentId = component.parent_id;
+  const visited = new Set<string>([component.id]);
+
+  while (parentId && !visited.has(parentId)) {
+    const parent = components.find((item) => item.id === parentId);
+    if (!parent) break;
+    depth += 1;
+    visited.add(parent.id);
+    parentId = parent.parent_id;
+  }
+
+  return Math.min(depth, 6);
 }

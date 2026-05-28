@@ -246,6 +246,7 @@ export function createComponent(type: ComponentType, index: number): UIComponent
     anchor: "top_left",
     position: [120 + (index % 8) * 24, 120 + (index % 6) * 20],
     size,
+    size_unit: "px",
     z_index: 10 + index,
     style_token: idBase,
     data_binding: defaultBinding[type] ?? "",

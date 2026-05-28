@@ -14,7 +14,18 @@ export function buildDesignYaml(design: DesignDocument): string {
         anchor: component.anchor,
         position: component.position,
         size: component.size,
+        size_unit: component.size_unit ?? "px",
+        ...(component.size_unit === "percent"
+          ? {
+              size_percent: [
+                roundPercent((component.size[0] / design.base_resolution[0]) * 100),
+                roundPercent((component.size[1] / design.base_resolution[1]) * 100),
+              ],
+            }
+          : {}),
         z_index: component.z_index,
+        parent_id: component.parent_id || undefined,
+        group_id: component.group_id || undefined,
         style_token: component.style_token,
         data_binding: component.data_binding,
         states: component.states,
@@ -68,4 +79,8 @@ export function downloadTextFile(filename: string, content: string): void {
 
 function flowKey(flow: Flow): string {
   return `${flow.trigger}:${flow.action}`;
+}
+
+function roundPercent(value: number): number {
+  return Math.round(value * 100) / 100;
 }
