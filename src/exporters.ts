@@ -26,7 +26,6 @@ export function buildDesignYaml(design: DesignDocument): string {
           : {}),
         z_index: component.z_index,
         parent_id: component.parent_id || undefined,
-        group_id: component.group_id || undefined,
         style_token: component.style_token,
         data_binding: component.data_binding,
         states: component.states,

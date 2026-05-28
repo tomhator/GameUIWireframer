@@ -9,7 +9,7 @@ import {
   Keyboard,
   Layers,
   ListChecks,
-  Map,
+  Map as MapIcon,
   MessageSquare,
   MousePointer2,
   Moon,
@@ -51,7 +51,7 @@ const componentIcons: Record<ComponentType, LucideIcon> = {
   TabGroup: Columns3,
   DialogueBox: MessageSquare,
   QuestTracker: ListChecks,
-  Minimap: Map,
+  Minimap: MapIcon,
   StatusEffectList: Rows3,
   EquipmentSlot: Shield,
 };
@@ -103,6 +103,14 @@ export default function App() {
   const selectedComponent = design.components.find((component) => component.id === selectedId) ?? null;
   const [baseWidth, baseHeight] = design.base_resolution;
   const tokenStyle = useMemo(() => buildTokenStyle(tokens), [tokens]);
+  const sortedComponents = useMemo(() => sortComponentsForCanvas(design.components), [design.components]);
+  const childComponentsByParent = useMemo(() => buildChildComponentMap(sortedComponents), [sortedComponents]);
+  const componentIds = useMemo(() => new Set(design.components.map((component) => component.id)), [design.components]);
+  const rootComponents = useMemo(
+    () => sortedComponents.filter((component) => !component.parent_id || !componentIds.has(component.parent_id)),
+    [componentIds, sortedComponents],
+  );
+  const listComponents = useMemo(() => orderComponentsForList(design.components), [design.components]);
 
   const scale = useMemo(() => {
     const horizontal = (canvasViewport.width - 32) / baseWidth;
@@ -137,15 +145,17 @@ export default function App() {
         components: current.components.map((component) => {
           if (component.id !== canvasEdit.id) return component;
           const edgeSnap = component.snap_to_edges ?? true;
+          const editContext = getComponentEditContext(component, current.components, current.base_resolution);
+          const localPoint = getLocalPoint(point, editContext.origin);
 
           if (canvasEdit.mode === "move") {
-            const bounds = getMoveBounds(component.size, current.base_resolution, edgeSnap);
-            const nextX = clamp(Math.round(point.x - canvasEdit.offsetX), bounds.minX, bounds.maxX);
-            const nextY = clamp(Math.round(point.y - canvasEdit.offsetY), bounds.minY, bounds.maxY);
+            const bounds = getMoveBounds(component.size, editContext.size, edgeSnap);
+            const nextX = clamp(Math.round(localPoint.x - canvasEdit.offsetX), bounds.minX, bounds.maxX);
+            const nextY = clamp(Math.round(localPoint.y - canvasEdit.offsetY), bounds.minY, bounds.maxY);
             return { ...component, position: [nextX, nextY] };
           }
 
-          const resized = getResizedFrame(canvasEdit, point, current.base_resolution, edgeSnap);
+          const resized = getResizedFrame(canvasEdit, localPoint, editContext.size, edgeSnap);
           return {
             ...component,
             position: resized.position,
@@ -211,9 +221,6 @@ export default function App() {
       components: current.components.map((component) => {
         if (component.parent_id === previousId) {
           return { ...component, parent_id: nextId };
-        }
-        if (component.group_id === previousId) {
-          return { ...component, group_id: nextId };
         }
         if (component.id !== previousId) return component;
         return {
@@ -285,8 +292,19 @@ export default function App() {
     setDesign((current) => {
       const nextResolution: [number, number] = [...current.base_resolution];
       nextResolution[axis] = Math.max(320, value);
-      return { ...current, base_resolution: nextResolution };
+      return {
+        ...current,
+        base_resolution: nextResolution,
+        safe_area: clamp(current.safe_area, 0, getMaxSafeArea(nextResolution)),
+      };
     });
+  }
+
+  function updateSafeArea(value: number) {
+    setDesign((current) => ({
+      ...current,
+      safe_area: clamp(Math.round(Number.isFinite(value) ? value : 0), 0, getMaxSafeArea(current.base_resolution)),
+    }));
   }
 
   function exportYamlFiles() {
@@ -300,11 +318,12 @@ export default function App() {
     setSelectedId(component.id);
     const point = getCanvasPoint(event);
     if (!point) return;
+    const localPoint = getLocalPointForComponent(point, component, design.components);
     setCanvasEdit({
       mode: "move",
       id: component.id,
-      offsetX: point.x - component.position[0],
-      offsetY: point.y - component.position[1],
+      offsetX: localPoint.x - component.position[0],
+      offsetY: localPoint.y - component.position[1],
     });
   }
 
@@ -313,11 +332,12 @@ export default function App() {
     setSelectedId(component.id);
     const point = getCanvasPoint(event);
     if (!point) return;
+    const localPoint = getLocalPointForComponent(point, component, design.components);
     setCanvasEdit({
       mode: "resize",
       id: component.id,
       handle,
-      startPoint: point,
+      startPoint: localPoint,
       startPosition: component.position,
       startSize: component.size,
     });
@@ -329,8 +349,21 @@ export default function App() {
     setDesign((current) => ({
       ...current,
       components: current.components
-        .filter((component) => component.id !== deletedId)
-        .map((component) => (component.parent_id === deletedId ? { ...component, parent_id: undefined } : component)),
+        .map((component) => {
+          if (component.parent_id !== deletedId) return component;
+          const absolutePosition = getComponentAbsolutePosition(component, current.components);
+          const bounds = getMoveBounds(component.size, current.base_resolution, component.snap_to_edges ?? true);
+          const nextPosition: [number, number] = [
+            clamp(absolutePosition[0], bounds.minX, bounds.maxX),
+            clamp(absolutePosition[1], bounds.minY, bounds.maxY),
+          ];
+          return {
+            ...component,
+            parent_id: undefined,
+            position: nextPosition,
+          };
+        })
+        .filter((component) => component.id !== deletedId),
     }));
     setSelectedId(null);
   }
@@ -351,47 +384,35 @@ export default function App() {
   }
 
   function updateComponentParent(componentId: string, parentId: string) {
-    setDesign((current) => ({
-      ...current,
-      components: current.components.map((component) => {
-        if (component.id !== componentId) return component;
-        const nextParentId = parentId && canNestUnder(componentId, parentId, current.components) ? parentId : undefined;
-        return { ...component, parent_id: nextParentId };
-      }),
-    }));
-  }
+    setDesign((current) => {
+      const component = current.components.find((item) => item.id === componentId);
+      if (!component) return current;
+      if (parentId && !canNestUnder(componentId, parentId, current.components)) return current;
+      const nextParentId = parentId || undefined;
+      if (component.parent_id === nextParentId) return current;
 
-  function updateComponentGroup(componentId: string, groupId: string) {
-    setDesign((current) => ({
-      ...current,
-      components: current.components.map((component) =>
-        component.id === componentId ? { ...component, group_id: groupId || undefined } : component,
-      ),
-    }));
+      const absolutePosition = getComponentAbsolutePosition(component, current.components);
+      const nextParent = nextParentId ? current.components.find((item) => item.id === nextParentId) : null;
+      const nextPosition = nextParent
+        ? clampPositionInside(
+            subtractPosition(absolutePosition, getComponentAbsolutePosition(nextParent, current.components)),
+            component.size,
+            nextParent.size,
+          )
+        : clampPositionToContainer(absolutePosition, component.size, current.base_resolution, component.snap_to_edges ?? true);
+
+      return {
+        ...current,
+        components: current.components.map((item) =>
+          item.id === componentId ? { ...item, parent_id: nextParentId, position: nextPosition } : item,
+        ),
+      };
+    });
   }
 
   function nestDraggedComponent(targetId: string) {
     if (!componentDragId || componentDragId === targetId) return;
     updateComponentParent(componentDragId, targetId);
-    setComponentDragId(null);
-  }
-
-  function groupDraggedComponent(targetId: string) {
-    if (!componentDragId || componentDragId === targetId) return;
-    setDesign((current) => {
-      const target = current.components.find((component) => component.id === targetId);
-      if (!target) return current;
-      const groupId = target.group_id || target.id;
-      return {
-        ...current,
-        components: current.components.map((component) => {
-          if (component.id === componentDragId || component.id === target.id) {
-            return { ...component, group_id: groupId };
-          }
-          return component;
-        }),
-      };
-    });
     setComponentDragId(null);
   }
 
@@ -422,6 +443,14 @@ export default function App() {
             value={baseHeight}
             min={320}
             onChange={(value) => updateResolution(1, value)}
+          />
+          <span className="resolution-label">Padding</span>
+          <TopbarNumberInput
+            label="Canvas padding"
+            value={design.safe_area}
+            min={0}
+            max={getMaxSafeArea(design.base_resolution)}
+            onChange={updateSafeArea}
           />
         </div>
 
@@ -491,29 +520,24 @@ export default function App() {
             </div>
           ) : (
             <div className="component-list">
-              {design.components
-                .slice()
-                .sort((a, b) => a.z_index - b.z_index)
-                .map((component) => (
-                  <ComponentListItem
-                    key={component.id}
-                    component={component}
-                    components={design.components}
-                    depth={componentDepth(component, design.components)}
-                    selected={component.id === selectedId}
-                    dragging={component.id === componentDragId}
-                    onDragStart={() => setComponentDragId(component.id)}
-                    onDragEnd={() => setComponentDragId(null)}
-                    onNestDrop={() => nestDraggedComponent(component.id)}
-                    onGroupDrop={() => groupDraggedComponent(component.id)}
-                    onSelect={() => {
-                      setSelectedId(component.id);
-                      setRightPanelTab("properties");
-                    }}
-                    onParentChange={(parentId) => updateComponentParent(component.id, parentId)}
-                    onGroupChange={(groupId) => updateComponentGroup(component.id, groupId)}
-                  />
-                ))}
+              {listComponents.map((component) => (
+                <ComponentListItem
+                  key={component.id}
+                  component={component}
+                  components={design.components}
+                  depth={componentDepth(component, design.components)}
+                  selected={component.id === selectedId}
+                  dragging={component.id === componentDragId}
+                  onDragStart={() => setComponentDragId(component.id)}
+                  onDragEnd={() => setComponentDragId(null)}
+                  onNestDrop={() => nestDraggedComponent(component.id)}
+                  onSelect={() => {
+                    setSelectedId(component.id);
+                    setRightPanelTab("properties");
+                  }}
+                  onParentChange={(parentId) => updateComponentParent(component.id, parentId)}
+                />
+              ))}
             </div>
           )}
         </aside>
@@ -559,19 +583,17 @@ export default function App() {
                     bottom: design.safe_area,
                   }}
                 />
-                {design.components
-                  .slice()
-                  .sort((a, b) => a.z_index - b.z_index)
-                  .map((component) => (
-                    <WireframeComponent
-                      key={component.id}
-                      component={component}
-                      tokens={tokens}
-                      selected={component.id === selectedId}
-                      onPointerDown={(event) => handleComponentPointerDown(event, component)}
-                      onResizePointerDown={(event, handle) => handleResizePointerDown(event, component, handle)}
-                    />
-                  ))}
+                {rootComponents.map((component) => (
+                  <WireframeComponent
+                    key={component.id}
+                    component={component}
+                    childrenByParent={childComponentsByParent}
+                    tokens={tokens}
+                    selectedId={selectedId}
+                    onPointerDown={handleComponentPointerDown}
+                    onResizePointerDown={handleResizePointerDown}
+                  />
+                ))}
               </div>
             </div>
           </div>
@@ -635,7 +657,7 @@ export default function App() {
                   checked={selectedComponent.snap_to_edges ?? true}
                   onChange={(event) => updateSnapToEdges(event.target.checked)}
                 />
-                <span>snap this component to canvas edges</span>
+                <span>snap this component to {selectedComponent.parent_id ? "parent" : "canvas"} edges</span>
               </label>
 
               <div className="field-grid">
@@ -681,11 +703,6 @@ export default function App() {
                 value={selectedComponent.style_token}
                 onChange={(value) => updateSelected((component) => ({ ...component, style_token: value }))}
               />
-              <TextInput
-                label="group_id"
-                value={selectedComponent.group_id ?? ""}
-                onChange={(value) => updateComponentGroup(selectedComponent.id, value)}
-              />
               <label className="field">
                 <span>parent_id</span>
                 <select
@@ -694,7 +711,7 @@ export default function App() {
                 >
                   <option value="">none</option>
                   {design.components
-                    .filter((component) => component.id !== selectedComponent.id)
+                    .filter((component) => canNestUnder(selectedComponent.id, component.id, design.components))
                     .map((component) => (
                       <option key={component.id} value={component.id}>
                         {component.id}
@@ -743,22 +760,34 @@ export default function App() {
 
 function WireframeComponent({
   component,
+  childrenByParent,
   tokens,
-  selected,
+  selectedId,
   onPointerDown,
   onResizePointerDown,
+  visited = new Set<string>(),
 }: {
   component: UIComponent;
+  childrenByParent: Map<string, UIComponent[]>;
   tokens: TokenDocument;
-  selected: boolean;
-  onPointerDown: (event: React.PointerEvent) => void;
-  onResizePointerDown: (event: React.PointerEvent, handle: ResizeHandle) => void;
+  selectedId: string | null;
+  onPointerDown: (event: React.PointerEvent, component: UIComponent) => void;
+  onResizePointerDown: (event: React.PointerEvent, component: UIComponent, handle: ResizeHandle) => void;
+  visited?: Set<string>;
 }) {
   const Icon = componentIcons[component.type];
   const accent = getComponentAccent(tokens, component);
+  const selected = component.id === selectedId;
+  const nextVisited = new Set(visited);
+  nextVisited.add(component.id);
+  const children = (childrenByParent.get(component.id) ?? []).filter((child) => !nextVisited.has(child.id));
+  const hasSelectedDescendant = selectedId ? hasComponentDescendant(component.id, selectedId, childrenByParent) : false;
+
   return (
     <div
-      className={`wire-component wire-${component.type.toLowerCase()}${selected ? " is-selected" : ""}`}
+      className={`wire-component wire-${component.type.toLowerCase()}${selected ? " is-selected" : ""}${
+        hasSelectedDescendant ? " has-selected-descendant" : ""
+      }`}
       style={{
         left: component.position[0],
         top: component.position[1],
@@ -767,7 +796,7 @@ function WireframeComponent({
         zIndex: component.z_index,
         "--component-accent": accent,
       } as CSSProperties}
-      onPointerDown={onPointerDown}
+      onPointerDown={(event) => onPointerDown(event, component)}
       title={`${component.id} / ${component.type}`}
     >
       <div className="wire-header">
@@ -776,13 +805,25 @@ function WireframeComponent({
       </div>
       {renderComponentBody(component)}
       <div className="wire-id">{component.id}</div>
+      {children.map((child) => (
+        <WireframeComponent
+          key={child.id}
+          component={child}
+          childrenByParent={childrenByParent}
+          tokens={tokens}
+          selectedId={selectedId}
+          onPointerDown={onPointerDown}
+          onResizePointerDown={onResizePointerDown}
+          visited={nextVisited}
+        />
+      ))}
       {selected
         ? RESIZE_HANDLES.map((handle) => (
             <span
               aria-hidden="true"
               className={`resize-handle resize-${handle}`}
               key={handle}
-              onPointerDown={(event) => onResizePointerDown(event, handle)}
+              onPointerDown={(event) => onResizePointerDown(event, component, handle)}
             />
           ))
         : null}
@@ -919,9 +960,7 @@ function ComponentListItem({
   onDragStart,
   onDragEnd,
   onNestDrop,
-  onGroupDrop,
   onParentChange,
-  onGroupChange,
 }: {
   component: UIComponent;
   components: UIComponent[];
@@ -932,9 +971,7 @@ function ComponentListItem({
   onDragStart: () => void;
   onDragEnd: () => void;
   onNestDrop: () => void;
-  onGroupDrop: () => void;
   onParentChange: (parentId: string) => void;
-  onGroupChange: (groupId: string) => void;
 }) {
   return (
     <div
@@ -963,16 +1000,6 @@ function ComponentListItem({
         >
           Nest
         </button>
-        <button
-          type="button"
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => {
-            event.preventDefault();
-            onGroupDrop();
-          }}
-        >
-          Group
-        </button>
       </div>
       <div className="component-list-controls">
         <select
@@ -982,19 +1009,13 @@ function ComponentListItem({
         >
           <option value="">parent none</option>
           {components
-            .filter((item) => item.id !== component.id)
+            .filter((item) => canNestUnder(component.id, item.id, components))
             .map((item) => (
               <option key={item.id} value={item.id}>
                 {item.id}
               </option>
             ))}
         </select>
-        <input
-          aria-label={`${component.id} group`}
-          placeholder="group"
-          value={component.group_id ?? ""}
-          onChange={(event) => onGroupChange(event.target.value)}
-        />
       </div>
     </div>
   );
@@ -1097,11 +1118,13 @@ function TopbarNumberInput({
   label,
   value,
   min,
+  max,
   onChange,
 }: {
   label: string;
   value: number;
   min?: number;
+  max?: number;
   onChange: (value: number) => void;
 }) {
   return (
@@ -1110,6 +1133,7 @@ function TopbarNumberInput({
       aria-label={label}
       type="number"
       min={min}
+      max={max}
       value={Number.isFinite(value) ? value : 0}
       onChange={(event) => onChange(Number(event.target.value))}
     />
@@ -1125,8 +1149,129 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
   );
 }
 
+function getMaxSafeArea(baseResolution: [number, number]): number {
+  return Math.floor(Math.min(baseResolution[0], baseResolution[1]) / 2);
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function sortComponentsForCanvas(components: UIComponent[]): UIComponent[] {
+  return components.slice().sort((a, b) => a.z_index - b.z_index);
+}
+
+function buildChildComponentMap(components: UIComponent[]): Map<string, UIComponent[]> {
+  const childMap = new Map<string, UIComponent[]>();
+  components.forEach((component) => {
+    if (!component.parent_id) return;
+    const siblings = childMap.get(component.parent_id) ?? [];
+    siblings.push(component);
+    childMap.set(component.parent_id, siblings);
+  });
+  return childMap;
+}
+
+function orderComponentsForList(components: UIComponent[]): UIComponent[] {
+  const sorted = sortComponentsForCanvas(components);
+  const componentIds = new Set(sorted.map((component) => component.id));
+  const childMap = buildChildComponentMap(sorted);
+  const ordered: UIComponent[] = [];
+  const visited = new Set<string>();
+
+  const visit = (component: UIComponent) => {
+    if (visited.has(component.id)) return;
+    visited.add(component.id);
+    ordered.push(component);
+    (childMap.get(component.id) ?? []).forEach(visit);
+  };
+
+  sorted.filter((component) => !component.parent_id || !componentIds.has(component.parent_id)).forEach(visit);
+  sorted.forEach(visit);
+  return ordered;
+}
+
+function getComponentEditContext(
+  component: UIComponent,
+  components: UIComponent[],
+  baseResolution: [number, number],
+): { origin: [number, number]; size: [number, number] } {
+  const parent = component.parent_id ? components.find((item) => item.id === component.parent_id) : undefined;
+  if (!parent) return { origin: [0, 0], size: baseResolution };
+  return {
+    origin: getComponentAbsolutePosition(parent, components),
+    size: parent.size,
+  };
+}
+
+function getLocalPoint(point: CanvasPoint, origin: [number, number]): CanvasPoint {
+  return {
+    x: point.x - origin[0],
+    y: point.y - origin[1],
+  };
+}
+
+function getLocalPointForComponent(point: CanvasPoint, component: UIComponent, components: UIComponent[]): CanvasPoint {
+  const parentOrigin = getComponentEditContext(component, components, [0, 0]).origin;
+  return getLocalPoint(point, parentOrigin);
+}
+
+function getComponentAbsolutePosition(component: UIComponent, components: UIComponent[]): [number, number] {
+  let x = component.position[0];
+  let y = component.position[1];
+  let parentId = component.parent_id;
+  const visited = new Set<string>([component.id]);
+
+  while (parentId && !visited.has(parentId)) {
+    const parent = components.find((item) => item.id === parentId);
+    if (!parent) break;
+    x += parent.position[0];
+    y += parent.position[1];
+    visited.add(parent.id);
+    parentId = parent.parent_id;
+  }
+
+  return [x, y];
+}
+
+function subtractPosition(position: [number, number], origin: [number, number]): [number, number] {
+  return [position[0] - origin[0], position[1] - origin[1]];
+}
+
+function clampPositionInside(
+  position: [number, number],
+  size: [number, number],
+  containerSize: [number, number],
+): [number, number] {
+  return [
+    clamp(Math.round(position[0]), 0, Math.max(0, containerSize[0] - size[0])),
+    clamp(Math.round(position[1]), 0, Math.max(0, containerSize[1] - size[1])),
+  ];
+}
+
+function clampPositionToContainer(
+  position: [number, number],
+  size: [number, number],
+  containerSize: [number, number],
+  edgeSnap: boolean,
+): [number, number] {
+  const bounds = getMoveBounds(size, containerSize, edgeSnap);
+  return [
+    clamp(Math.round(position[0]), bounds.minX, bounds.maxX),
+    clamp(Math.round(position[1]), bounds.minY, bounds.maxY),
+  ];
+}
+
+function hasComponentDescendant(
+  parentId: string,
+  targetId: string,
+  childMap: Map<string, UIComponent[]>,
+  visited = new Set<string>(),
+): boolean {
+  if (visited.has(parentId)) return false;
+  visited.add(parentId);
+  const children = childMap.get(parentId) ?? [];
+  return children.some((child) => child.id === targetId || hasComponentDescendant(child.id, targetId, childMap, visited));
 }
 
 function getMoveBounds(size: [number, number], baseResolution: [number, number], edgeSnap: boolean) {
@@ -1134,8 +1279,8 @@ function getMoveBounds(size: [number, number], baseResolution: [number, number],
     return {
       minX: 0,
       minY: 0,
-      maxX: baseResolution[0] - size[0],
-      maxY: baseResolution[1] - size[1],
+      maxX: Math.max(0, baseResolution[0] - size[0]),
+      maxY: Math.max(0, baseResolution[1] - size[1]),
     };
   }
 

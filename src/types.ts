@@ -64,7 +64,6 @@ export interface UIComponent {
   snap_to_edges?: boolean;
   z_index: number;
   parent_id?: string;
-  group_id?: string;
   style_token: string;
   data_binding: string;
   states: Record<string, ComponentState>;
