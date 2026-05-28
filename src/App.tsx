@@ -65,6 +65,24 @@ const componentIcons: Record<ComponentType, LucideIcon> = {
   EquipmentSlot: Shield,
 };
 
+const defaultMaterialIcons: Record<ComponentType, string> = {
+  Panel: "dashboard",
+  Button: "touch_app",
+  IconButton: "radio_button_checked",
+  ProgressBar: "battery_horiz_075",
+  ResourceCounter: "paid",
+  InventoryGrid: "inventory_2",
+  SkillSlot: "bolt",
+  Tooltip: "tooltip",
+  Modal: "select_window",
+  TabGroup: "tab",
+  DialogueBox: "chat",
+  QuestTracker: "checklist",
+  Minimap: "map",
+  StatusEffectList: "stars",
+  EquipmentSlot: "shield",
+};
+
 interface DragState {
   mode: "move";
   id: string;
@@ -621,6 +639,16 @@ export default function App() {
                 value={selectedComponent.label}
                 onChange={(value) => updateSelected((component) => ({ ...component, label: value }))}
               />
+              <TextareaInput
+                label="prompt"
+                value={selectedComponent.prompt ?? ""}
+                onChange={(value) => updateSelected((component) => ({ ...component, prompt: value }))}
+              />
+              <TextInput
+                label="material_icon"
+                value={selectedComponent.material_icon ?? getMaterialIconName(selectedComponent)}
+                onChange={(value) => updateSelected((component) => ({ ...component, material_icon: value }))}
+              />
 
               <label className="field">
                 <span>size unit</span>
@@ -684,6 +712,22 @@ export default function App() {
                 value={selectedComponent.style_token}
                 onChange={(value) => updateSelected((component) => ({ ...component, style_token: value }))}
               />
+              {selectedComponent.type === "Panel" ? (
+                <>
+                  <ColorInput
+                    label="panel_title_bg"
+                    value={selectedComponent.panel_title_bg ?? ""}
+                    fallback="#1f6feb"
+                    onChange={(value) => updateSelected((component) => ({ ...component, panel_title_bg: value }))}
+                  />
+                  <ColorInput
+                    label="panel_title_color"
+                    value={selectedComponent.panel_title_color ?? ""}
+                    fallback="#ffffff"
+                    onChange={(value) => updateSelected((component) => ({ ...component, panel_title_color: value }))}
+                  />
+                </>
+              ) : null}
               <label className="field">
                 <span>parent_id</span>
                 <select
@@ -764,6 +808,8 @@ function WireframeComponent({
         height: component.size[1],
         zIndex: component.z_index,
         "--component-accent": accent,
+        ...(component.type === "Panel" && component.panel_title_bg ? { "--panel-title-bg": component.panel_title_bg } : {}),
+        ...(component.type === "Panel" && component.panel_title_color ? { "--panel-title-color": component.panel_title_color } : {}),
       } as CSSProperties}
       onPointerDown={onPointerDown}
       title={`${component.id} / ${component.type}`}
@@ -852,7 +898,7 @@ function renderComponentBody(component: UIComponent) {
   if (component.type === "SkillSlot" || component.type === "EquipmentSlot" || component.type === "IconButton") {
     return (
       <div className="single-icon-body">
-        {component.type === "EquipmentSlot" ? <Shield size={28} aria-hidden="true" /> : <Zap size={28} aria-hidden="true" />}
+        <MaterialSymbol name={getMaterialIconName(component)} />
       </div>
     );
   }
@@ -904,7 +950,15 @@ function renderComponentBody(component: UIComponent) {
     return <div className="tooltip-line" />;
   }
 
-  return <div className="panel-body-line" />;
+  return null;
+}
+
+function MaterialSymbol({ name }: { name: string }) {
+  return (
+    <span className="material-symbol material-symbols-outlined" aria-hidden="true">
+      {name}
+    </span>
+  );
 }
 
 function ComponentListItem({
@@ -930,9 +984,16 @@ function ComponentListItem({
   onNestDrop: () => void;
   onParentChange: (parentId: string) => void;
 }) {
+  const childCount = components.filter((item) => item.parent_id === component.id).length;
+  const isGroupPanel = component.type === "Panel" && childCount > 0;
+  const primaryLabel = isGroupPanel ? component.label || component.id : component.id;
+  const secondaryLabel = isGroupPanel ? `Group · ${childCount}` : component.type;
+
   return (
     <div
-      className={`component-list-item${selected ? " is-selected" : ""}${dragging ? " is-dragging" : ""}`}
+      className={`component-list-item${selected ? " is-selected" : ""}${dragging ? " is-dragging" : ""}${
+        isGroupPanel ? " is-group-panel" : ""
+      }`}
       draggable
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = "move";
@@ -943,8 +1004,8 @@ function ComponentListItem({
       style={{ paddingLeft: 8 + depth * 12 }}
     >
       <button className="component-select-button" type="button" onClick={onSelect} title={`Select ${component.id}`}>
-        <span className="component-list-id">{component.id}</span>
-        <span className="component-list-type">{component.type}</span>
+        <span className="component-list-id">{primaryLabel}</span>
+        <span className="component-list-type">{secondaryLabel}</span>
       </button>
       {component.type === "Panel" ? (
         <div className="component-drop-row">
@@ -1023,6 +1084,50 @@ function TextInput({
     <label className="field">
       <span>{label}</span>
       <input value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  );
+}
+
+function TextareaInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <textarea value={value} rows={4} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  );
+}
+
+function ColorInput({
+  label,
+  value,
+  fallback,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  fallback: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <div className="color-input-row">
+        <input
+          aria-label={`${label} picker`}
+          type="color"
+          value={isValidHexColor(value) ? value : fallback}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <input value={value} placeholder={fallback} onChange={(event) => onChange(event.target.value)} />
+      </div>
     </label>
   );
 }
@@ -1114,6 +1219,10 @@ function getMaxSafeArea(baseResolution: [number, number]): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function isValidHexColor(value: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(value);
 }
 
 function sortComponentsForCanvas(components: UIComponent[]): UIComponent[] {
@@ -1314,6 +1423,10 @@ function getComponentAccent(tokens: TokenDocument, component: UIComponent): stri
     return getTokenColor(tokens, "status_buff") ?? "#59d6c9";
   }
   return getTokenColor(tokens, "selected") ?? "#58a6ff";
+}
+
+function getMaterialIconName(component: UIComponent): string {
+  return component.material_icon || defaultMaterialIcons[component.type];
 }
 
 function buildTokenStyle(tokens: TokenDocument): CSSProperties {

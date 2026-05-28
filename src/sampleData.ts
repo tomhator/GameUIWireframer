@@ -221,6 +221,24 @@ const defaultBinding: Partial<Record<ComponentType, string>> = {
   EquipmentSlot: "player.equipment.slot",
 };
 
+const defaultMaterialIcon: Record<ComponentType, string> = {
+  Panel: "dashboard",
+  Button: "touch_app",
+  IconButton: "radio_button_checked",
+  ProgressBar: "battery_horiz_075",
+  ResourceCounter: "paid",
+  InventoryGrid: "inventory_2",
+  SkillSlot: "bolt",
+  Tooltip: "tooltip",
+  Modal: "select_window",
+  TabGroup: "tab",
+  DialogueBox: "chat",
+  QuestTracker: "checklist",
+  Minimap: "map",
+  StatusEffectList: "stars",
+  EquipmentSlot: "shield",
+};
+
 const clickableTypes = new Set<ComponentType>([
   "Button",
   "IconButton",
@@ -249,6 +267,8 @@ export function createComponent(type: ComponentType, index: number): UIComponent
     size_unit: "px",
     snap_mode: "canvas",
     z_index: 10 + index,
+    prompt: "",
+    material_icon: defaultMaterialIcon[type],
     style_token: idBase,
     data_binding: defaultBinding[type] ?? "",
     states:

@@ -68,6 +68,10 @@ export interface UIComponent {
   snap_mode?: SnapMode;
   z_index: number;
   parent_id?: string;
+  prompt?: string;
+  material_icon?: string;
+  panel_title_bg?: string;
+  panel_title_color?: string;
   style_token: string;
   data_binding: string;
   states: Record<string, ComponentState>;
