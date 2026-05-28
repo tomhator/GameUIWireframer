@@ -9,11 +9,11 @@ import type {
 
 export const defaultTokens: TokenDocument = {
   colors: {
-    canvas_bg: "#10141c",
-    panel_bg: "#222936",
-    panel_border: "#435066",
-    text_primary: "#f4f7fb",
-    text_muted: "#9ba8ba",
+    canvas_bg: "#f9fbfe",
+    panel_bg: "#ffffff",
+    panel_border: "#b8c3d1",
+    text_primary: "#172033",
+    text_muted: "#657386",
     hp_bar: "#28c76f",
     hp_bar_low: "#ff4d5e",
     enemy_hp: "#e35d5b",
@@ -247,6 +247,7 @@ export function createComponent(type: ComponentType, index: number): UIComponent
     position: [120 + (index % 8) * 24, 120 + (index % 6) * 20],
     size,
     size_unit: "px",
+    snap_to_edges: true,
     z_index: 10 + index,
     style_token: idBase,
     data_binding: defaultBinding[type] ?? "",

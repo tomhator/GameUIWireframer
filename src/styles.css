@@ -137,24 +137,6 @@ button {
   color: #788496;
 }
 
-.toggle-button {
-  height: 36px;
-  padding: 0 12px;
-  border: 1px solid #303a49;
-  border-radius: 6px;
-  background: #10141b;
-  color: #d8e3f0;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.toggle-button.is-active {
-  border-color: #2e7bcf;
-  background: #173b69;
-  color: #ffffff;
-}
-
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -201,7 +183,7 @@ button {
 .left-panel {
   border-right: 1px solid #252d39;
   display: grid;
-  grid-template-rows: minmax(300px, 1.2fr) minmax(220px, 0.8fr);
+  grid-template-rows: 42px minmax(0, 1fr);
 }
 
 .right-panel {
@@ -319,6 +301,10 @@ button {
   background: #10151d;
 }
 
+.component-list-item.is-dragging {
+  opacity: 0.55;
+}
+
 .component-list-item.is-selected {
   border-color: #58a6ff;
   box-shadow: inset 0 0 0 1px rgba(88, 166, 255, 0.32);
@@ -356,6 +342,29 @@ button {
   font-size: 11px;
 }
 
+.component-drop-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.component-drop-row button {
+  height: 24px;
+  border: 1px dashed #3b4658;
+  border-radius: 5px;
+  background: #121923;
+  color: #8d9aad;
+  cursor: grab;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.component-drop-row button:hover {
+  border-color: #58a6ff;
+  background: #172132;
+  color: #dbeafe;
+}
+
 .component-list-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 0.85fr);
@@ -378,7 +387,6 @@ button {
 .palette-item:focus-visible,
 .primary-button:focus-visible,
 .icon-button:focus-visible,
-.toggle-button:focus-visible,
 .panel-tabs button:focus-visible,
 input:focus-visible,
 select:focus-visible {
@@ -452,7 +460,7 @@ select:focus-visible {
   position: relative;
   overflow: hidden;
   transform-origin: top left;
-  background: #10141c;
+  background: var(--token-canvas-bg, #10141c);
 }
 
 .safe-area {
@@ -468,17 +476,17 @@ select:focus-visible {
   min-width: 8px;
   min-height: 8px;
   overflow: hidden;
-  border: 2px solid rgba(108, 122, 145, 0.8);
-  border-radius: 6px;
-  background: rgba(31, 39, 52, 0.92);
-  color: #f4f7fb;
+  border: 2px solid var(--token-panel-border, rgba(108, 122, 145, 0.8));
+  border-radius: var(--token-radius-md, 6px);
+  background: color-mix(in srgb, var(--token-panel-bg, #222936) 88%, transparent);
+  color: var(--token-text-primary, #f4f7fb);
   cursor: grab;
   user-select: none;
 }
 
 .wire-component:hover {
   border-color: #72a4da;
-  background: rgba(39, 49, 64, 0.96);
+  background: color-mix(in srgb, var(--token-panel-bg, #222936) 96%, white 4%);
 }
 
 .wire-component:active {
@@ -487,8 +495,8 @@ select:focus-visible {
 
 .wire-component.is-selected {
   overflow: visible;
-  border-color: #58a6ff;
-  box-shadow: inset 0 0 0 2px rgba(88, 166, 255, 0.34), 0 0 0 2px rgba(88, 166, 255, 0.25);
+  border-color: var(--token-selected, #58a6ff);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--token-selected, #58a6ff) 34%, transparent), 0 0 0 2px color-mix(in srgb, var(--token-selected, #58a6ff) 25%, transparent);
 }
 
 .resize-handle {
@@ -568,8 +576,8 @@ select:focus-visible {
   min-height: 28px;
   padding: 5px 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-  color: #f7fbff;
-  font-size: 13px;
+  color: var(--token-text-primary, #f7fbff);
+  font-size: var(--token-font-base-size, 13px);
   font-weight: 700;
 }
 
@@ -585,8 +593,8 @@ select:focus-visible {
 
 .wire-id {
   padding: 3px 8px 5px;
-  color: #a8b4c4;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  color: var(--token-text-muted, #a8b4c4);
+  font-family: var(--token-font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 11px;
 }
 
@@ -626,11 +634,11 @@ select:focus-visible {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #28c76f, #59d6c9);
+  background: var(--component-accent, #28c76f);
 }
 
 .wire-progressbar[title*="enemy"] .progress-fill {
-  background: linear-gradient(90deg, #e35d5b, #ff9f43);
+  background: var(--component-accent, #e35d5b);
 }
 
 .skill-strip {
@@ -647,9 +655,9 @@ select:focus-visible {
   gap: 5px;
   min-width: 0;
   border: 1px solid #47546a;
-  border-radius: 6px;
+  border-radius: var(--token-radius-md, 6px);
   background: #151c27;
-  color: #f2b84b;
+  color: var(--token-gold, #f2b84b);
   font-size: 12px;
   font-weight: 700;
 }
@@ -666,8 +674,8 @@ select:focus-visible {
 
 .resource-row {
   gap: 8px;
-  color: #f2b84b;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  color: var(--component-accent, var(--token-gold, #f2b84b));
+  font-family: var(--token-font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 14px;
 }
 
@@ -684,11 +692,11 @@ select:focus-visible {
   flex: 0 0 auto;
   border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: 50%;
-  background: #59d6c9;
+  background: var(--token-status-buff, #59d6c9);
 }
 
 .status-dot:nth-child(even) {
-  background: #d778ff;
+  background: var(--token-status-debuff, #d778ff);
 }
 
 .minimap-grid {
@@ -839,6 +847,27 @@ select:focus-visible {
   color: #ffd5da;
 }
 
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #c5d0dd;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.check-field input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: #1f6feb;
+}
+
+.check-field span {
+  min-width: 0;
+}
+
 .field {
   display: grid;
   gap: 5px;
@@ -986,7 +1015,7 @@ select:focus-visible {
 }
 
 .app-shell[data-theme="light"] .canvas-surface {
-  background: #f9fbfe;
+  background: var(--token-canvas-bg, #f9fbfe);
 }
 
 .app-shell[data-theme="light"] .screen-input,
@@ -1025,18 +1054,6 @@ select:focus-visible {
   border-color: #98acc3;
   background: #eef4fb;
   color: #0f172a;
-}
-
-.app-shell[data-theme="light"] .toggle-button {
-  border-color: #c9d3df;
-  background: #ffffff;
-  color: #334155;
-}
-
-.app-shell[data-theme="light"] .toggle-button.is-active {
-  border-color: #2870b9;
-  background: #dceeff;
-  color: #164d83;
 }
 
 .app-shell[data-theme="light"] .panel-section + .panel-section,
@@ -1095,6 +1112,18 @@ select:focus-visible {
   color: #1f2937;
 }
 
+.app-shell[data-theme="light"] .component-drop-row button {
+  border-color: #b8c3d1;
+  background: #f5f8fc;
+  color: #657386;
+}
+
+.app-shell[data-theme="light"] .component-drop-row button:hover {
+  border-color: #2870b9;
+  background: #edf5ff;
+  color: #164d83;
+}
+
 .app-shell[data-theme="light"] .property-section {
   border-top-color: #d6dee9;
 }
@@ -1110,6 +1139,10 @@ select:focus-visible {
   color: #7b1d27;
 }
 
+.app-shell[data-theme="light"] .check-field {
+  color: #334155;
+}
+
 .app-shell[data-theme="light"] .empty-properties {
   color: #657386;
 }
@@ -1119,28 +1152,28 @@ select:focus-visible {
 }
 
 .app-shell[data-theme="light"] .wire-component {
-  border-color: rgba(117, 132, 154, 0.85);
-  background: rgba(255, 255, 255, 0.96);
-  color: #1f2937;
+  border-color: var(--token-panel-border, rgba(117, 132, 154, 0.85));
+  background: color-mix(in srgb, var(--token-panel-bg, #ffffff) 96%, transparent);
+  color: var(--token-text-primary, #1f2937);
 }
 
 .app-shell[data-theme="light"] .wire-component:hover {
   border-color: #4f89c8;
-  background: #ffffff;
+  background: color-mix(in srgb, var(--token-panel-bg, #ffffff) 96%, white 4%);
 }
 
 .app-shell[data-theme="light"] .wire-component.is-selected {
-  border-color: #1f75d6;
-  box-shadow: inset 0 0 0 2px rgba(31, 117, 214, 0.22), 0 0 0 2px rgba(31, 117, 214, 0.22);
+  border-color: var(--token-selected, #1f75d6);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--token-selected, #1f75d6) 22%, transparent), 0 0 0 2px color-mix(in srgb, var(--token-selected, #1f75d6) 22%, transparent);
 }
 
 .app-shell[data-theme="light"] .wire-header {
   border-bottom-color: rgba(70, 83, 104, 0.18);
-  color: #172033;
+  color: var(--token-text-primary, #172033);
 }
 
 .app-shell[data-theme="light"] .wire-id {
-  color: #657386;
+  color: var(--token-text-muted, #657386);
 }
 
 .app-shell[data-theme="light"] .wire-progressbar .wire-id,

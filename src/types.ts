@@ -61,6 +61,7 @@ export interface UIComponent {
   size: Vec2;
   size_unit?: "px" | "percent";
   size_percent?: Vec2;
+  snap_to_edges?: boolean;
   z_index: number;
   parent_id?: string;
   group_id?: string;

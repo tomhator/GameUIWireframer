@@ -28,7 +28,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { buildDesignYaml, buildFlowsYaml, buildTokensYaml, downloadTextFile } from "./exporters";
 import {
   createComponent,
@@ -76,6 +76,7 @@ interface ResizeState {
 
 type CanvasEditState = DragState | ResizeState;
 type ThemeMode = "light" | "dark";
+type LeftPanelTab = "palette" | "components";
 type RightPanelTab = "properties" | "tokens";
 type SizeUnit = "px" | "percent";
 
@@ -94,12 +95,14 @@ export default function App() {
   const [canvasViewport, setCanvasViewport] = useState({ width: 1, height: 1 });
   const [canvasEdit, setCanvasEdit] = useState<CanvasEditState | null>(null);
   const [theme, setTheme] = useState<ThemeMode>("light");
+  const [leftPanelTab, setLeftPanelTab] = useState<LeftPanelTab>("palette");
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>("properties");
-  const [edgeSnap, setEdgeSnap] = useState(true);
+  const [componentDragId, setComponentDragId] = useState<string | null>(null);
 
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
   const selectedComponent = design.components.find((component) => component.id === selectedId) ?? null;
   const [baseWidth, baseHeight] = design.base_resolution;
+  const tokenStyle = useMemo(() => buildTokenStyle(tokens), [tokens]);
 
   const scale = useMemo(() => {
     const horizontal = (canvasViewport.width - 32) / baseWidth;
@@ -133,6 +136,7 @@ export default function App() {
         ...current,
         components: current.components.map((component) => {
           if (component.id !== canvasEdit.id) return component;
+          const edgeSnap = component.snap_to_edges ?? true;
 
           if (canvasEdit.mode === "move") {
             const bounds = getMoveBounds(component.size, current.base_resolution, edgeSnap);
@@ -163,7 +167,7 @@ export default function App() {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [canvasEdit, edgeSnap, scale]);
+  }, [canvasEdit, scale]);
 
   function getCanvasPoint(event: PointerEvent | React.PointerEvent): CanvasPoint | null {
     const node = canvasViewportRef.current;
@@ -208,6 +212,9 @@ export default function App() {
         if (component.parent_id === previousId) {
           return { ...component, parent_id: nextId };
         }
+        if (component.group_id === previousId) {
+          return { ...component, group_id: nextId };
+        }
         if (component.id !== previousId) return component;
         return {
           ...component,
@@ -251,6 +258,13 @@ export default function App() {
       ...component,
       size_unit: unit,
       size_percent: unit === "percent" ? sizeToPercent(component.size, design.base_resolution) : undefined,
+    }));
+  }
+
+  function updateSnapToEdges(enabled: boolean) {
+    updateSelected((component) => ({
+      ...component,
+      snap_to_edges: enabled,
     }));
   }
 
@@ -336,8 +350,53 @@ export default function App() {
     });
   }
 
+  function updateComponentParent(componentId: string, parentId: string) {
+    setDesign((current) => ({
+      ...current,
+      components: current.components.map((component) => {
+        if (component.id !== componentId) return component;
+        const nextParentId = parentId && canNestUnder(componentId, parentId, current.components) ? parentId : undefined;
+        return { ...component, parent_id: nextParentId };
+      }),
+    }));
+  }
+
+  function updateComponentGroup(componentId: string, groupId: string) {
+    setDesign((current) => ({
+      ...current,
+      components: current.components.map((component) =>
+        component.id === componentId ? { ...component, group_id: groupId || undefined } : component,
+      ),
+    }));
+  }
+
+  function nestDraggedComponent(targetId: string) {
+    if (!componentDragId || componentDragId === targetId) return;
+    updateComponentParent(componentDragId, targetId);
+    setComponentDragId(null);
+  }
+
+  function groupDraggedComponent(targetId: string) {
+    if (!componentDragId || componentDragId === targetId) return;
+    setDesign((current) => {
+      const target = current.components.find((component) => component.id === targetId);
+      if (!target) return current;
+      const groupId = target.group_id || target.id;
+      return {
+        ...current,
+        components: current.components.map((component) => {
+          if (component.id === componentDragId || component.id === target.id) {
+            return { ...component, group_id: groupId };
+          }
+          return component;
+        }),
+      };
+    });
+    setComponentDragId(null);
+  }
+
   return (
-    <div className="app-shell" data-theme={theme}>
+    <div className="app-shell" data-theme={theme} style={tokenStyle}>
       <header className="topbar">
         <div className="topbar-group project-group">
           <Layers size={18} aria-hidden="true" />
@@ -367,16 +426,6 @@ export default function App() {
         </div>
 
         <button
-          className={`toggle-button${edgeSnap ? " is-active" : ""}`}
-          type="button"
-          aria-pressed={edgeSnap}
-          onClick={() => setEdgeSnap((value) => !value)}
-          title="Toggle edge snap"
-        >
-          Snap
-        </button>
-
-        <button
           className="icon-button"
           type="button"
           onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
@@ -394,11 +443,34 @@ export default function App() {
 
       <main className="workspace">
         <aside className="left-panel">
-          <section className="panel-section">
-            <div className="panel-header">
-              <Box size={17} aria-hidden="true" />
-              <span>Palette</span>
+          <div className="panel-header tabbed-header">
+            <div className="panel-title">
+              {leftPanelTab === "palette" ? <Box size={17} aria-hidden="true" /> : <ListChecks size={17} aria-hidden="true" />}
+              <span>{leftPanelTab === "palette" ? "Palette" : "Components"}</span>
             </div>
+            <div className="panel-tabs" role="tablist" aria-label="Left panel">
+              <button
+                className={leftPanelTab === "palette" ? "is-active" : ""}
+                type="button"
+                role="tab"
+                aria-selected={leftPanelTab === "palette"}
+                onClick={() => setLeftPanelTab("palette")}
+              >
+                Palette
+              </button>
+              <button
+                className={leftPanelTab === "components" ? "is-active" : ""}
+                type="button"
+                role="tab"
+                aria-selected={leftPanelTab === "components"}
+                onClick={() => setLeftPanelTab("components")}
+              >
+                List
+              </button>
+            </div>
+          </div>
+
+          {leftPanelTab === "palette" ? (
             <div className="palette-list">
               {COMPONENT_TYPES.map((type) => {
                 const Icon = componentIcons[type];
@@ -417,13 +489,7 @@ export default function App() {
                 );
               })}
             </div>
-          </section>
-
-          <section className="panel-section">
-            <div className="panel-header">
-              <ListChecks size={17} aria-hidden="true" />
-              <span>Components</span>
-            </div>
+          ) : (
             <div className="component-list">
               {design.components
                 .slice()
@@ -435,30 +501,21 @@ export default function App() {
                     components={design.components}
                     depth={componentDepth(component, design.components)}
                     selected={component.id === selectedId}
+                    dragging={component.id === componentDragId}
+                    onDragStart={() => setComponentDragId(component.id)}
+                    onDragEnd={() => setComponentDragId(null)}
+                    onNestDrop={() => nestDraggedComponent(component.id)}
+                    onGroupDrop={() => groupDraggedComponent(component.id)}
                     onSelect={() => {
                       setSelectedId(component.id);
                       setRightPanelTab("properties");
                     }}
-                    onParentChange={(parentId) =>
-                      setDesign((current) => ({
-                        ...current,
-                        components: current.components.map((item) =>
-                          item.id === component.id ? { ...item, parent_id: parentId || undefined } : item,
-                        ),
-                      }))
-                    }
-                    onGroupChange={(groupId) =>
-                      setDesign((current) => ({
-                        ...current,
-                        components: current.components.map((item) =>
-                          item.id === component.id ? { ...item, group_id: groupId || undefined } : item,
-                        ),
-                      }))
-                    }
+                    onParentChange={(parentId) => updateComponentParent(component.id, parentId)}
+                    onGroupChange={(groupId) => updateComponentGroup(component.id, groupId)}
                   />
                 ))}
             </div>
-          </section>
+          )}
         </aside>
 
         <section className="canvas-panel" aria-label="Canvas editor">
@@ -509,6 +566,7 @@ export default function App() {
                     <WireframeComponent
                       key={component.id}
                       component={component}
+                      tokens={tokens}
                       selected={component.id === selectedId}
                       onPointerDown={(event) => handleComponentPointerDown(event, component)}
                       onResizePointerDown={(event, handle) => handleResizePointerDown(event, component, handle)}
@@ -571,6 +629,15 @@ export default function App() {
                 </select>
               </label>
 
+              <label className="check-field">
+                <input
+                  type="checkbox"
+                  checked={selectedComponent.snap_to_edges ?? true}
+                  onChange={(event) => updateSnapToEdges(event.target.checked)}
+                />
+                <span>snap this component to canvas edges</span>
+              </label>
+
               <div className="field-grid">
                 <NumberInput label="x" value={selectedComponent.position[0]} onChange={(value) => updatePosition(0, value)} />
                 <NumberInput label="y" value={selectedComponent.position[1]} onChange={(value) => updatePosition(1, value)} />
@@ -617,15 +684,13 @@ export default function App() {
               <TextInput
                 label="group_id"
                 value={selectedComponent.group_id ?? ""}
-                onChange={(value) => updateSelected((component) => ({ ...component, group_id: value || undefined }))}
+                onChange={(value) => updateComponentGroup(selectedComponent.id, value)}
               />
               <label className="field">
                 <span>parent_id</span>
                 <select
                   value={selectedComponent.parent_id ?? ""}
-                  onChange={(event) =>
-                    updateSelected((component) => ({ ...component, parent_id: event.target.value || undefined }))
-                  }
+                  onChange={(event) => updateComponentParent(selectedComponent.id, event.target.value)}
                 >
                   <option value="">none</option>
                   {design.components
@@ -678,16 +743,19 @@ export default function App() {
 
 function WireframeComponent({
   component,
+  tokens,
   selected,
   onPointerDown,
   onResizePointerDown,
 }: {
   component: UIComponent;
+  tokens: TokenDocument;
   selected: boolean;
   onPointerDown: (event: React.PointerEvent) => void;
   onResizePointerDown: (event: React.PointerEvent, handle: ResizeHandle) => void;
 }) {
   const Icon = componentIcons[component.type];
+  const accent = getComponentAccent(tokens, component);
   return (
     <div
       className={`wire-component wire-${component.type.toLowerCase()}${selected ? " is-selected" : ""}`}
@@ -697,7 +765,8 @@ function WireframeComponent({
         width: component.size[0],
         height: component.size[1],
         zIndex: component.z_index,
-      }}
+        "--component-accent": accent,
+      } as CSSProperties}
       onPointerDown={onPointerDown}
       title={`${component.id} / ${component.type}`}
     >
@@ -845,7 +914,12 @@ function ComponentListItem({
   components,
   depth,
   selected,
+  dragging,
   onSelect,
+  onDragStart,
+  onDragEnd,
+  onNestDrop,
+  onGroupDrop,
   onParentChange,
   onGroupChange,
 }: {
@@ -853,16 +927,53 @@ function ComponentListItem({
   components: UIComponent[];
   depth: number;
   selected: boolean;
+  dragging: boolean;
   onSelect: () => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onNestDrop: () => void;
+  onGroupDrop: () => void;
   onParentChange: (parentId: string) => void;
   onGroupChange: (groupId: string) => void;
 }) {
   return (
-    <div className={`component-list-item${selected ? " is-selected" : ""}`} style={{ paddingLeft: 8 + depth * 12 }}>
+    <div
+      className={`component-list-item${selected ? " is-selected" : ""}${dragging ? " is-dragging" : ""}`}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", component.id);
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
+      style={{ paddingLeft: 8 + depth * 12 }}
+    >
       <button className="component-select-button" type="button" onClick={onSelect} title={`Select ${component.id}`}>
         <span className="component-list-id">{component.id}</span>
         <span className="component-list-type">{component.type}</span>
       </button>
+      <div className="component-drop-row">
+        <button
+          type="button"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            onNestDrop();
+          }}
+        >
+          Nest
+        </button>
+        <button
+          type="button"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            onGroupDrop();
+          }}
+        >
+          Group
+        </button>
+      </div>
       <div className="component-list-controls">
         <select
           aria-label={`${component.id} parent`}
@@ -1114,4 +1225,59 @@ function componentDepth(component: UIComponent, components: UIComponent[]): numb
   }
 
   return Math.min(depth, 6);
+}
+
+function canNestUnder(childId: string, parentId: string, components: UIComponent[]): boolean {
+  if (!parentId || childId === parentId) return false;
+  let cursor: string | undefined = parentId;
+  const visited = new Set<string>();
+
+  while (cursor) {
+    if (cursor === childId) return false;
+    if (visited.has(cursor)) return false;
+    visited.add(cursor);
+    cursor = components.find((component) => component.id === cursor)?.parent_id;
+  }
+
+  return true;
+}
+
+function getTokenColor(tokens: TokenDocument, key: string): string | null {
+  return tokens.colors[key] ?? null;
+}
+
+function getComponentAccent(tokens: TokenDocument, component: UIComponent): string {
+  const styleToken = getTokenColor(tokens, component.style_token);
+  if (styleToken) return styleToken;
+  if (component.type === "ResourceCounter" || component.type === "SkillSlot" || component.type === "Button") {
+    return getTokenColor(tokens, "gold") ?? "#f2b84b";
+  }
+  if (component.type === "StatusEffectList") {
+    return getTokenColor(tokens, "status_buff") ?? "#59d6c9";
+  }
+  return getTokenColor(tokens, "selected") ?? "#58a6ff";
+}
+
+function buildTokenStyle(tokens: TokenDocument): CSSProperties {
+  const style: Record<string, string | number> = {
+    "--token-canvas-bg": tokens.colors.canvas_bg,
+    "--token-panel-bg": tokens.colors.panel_bg,
+    "--token-panel-border": tokens.colors.panel_border,
+    "--token-text-primary": tokens.colors.text_primary,
+    "--token-text-muted": tokens.colors.text_muted,
+    "--token-selected": tokens.colors.selected,
+    "--token-gold": tokens.colors.gold,
+    "--token-status-buff": tokens.colors.status_buff,
+    "--token-status-debuff": tokens.colors.status_debuff,
+    "--token-font-ui": String(tokens.fonts.ui),
+    "--token-font-mono": String(tokens.fonts.mono),
+    "--token-font-base-size": `${tokens.fonts.base_size}px`,
+    "--token-radius-sm": `${tokens.radius.sm}px`,
+    "--token-radius-md": `${tokens.radius.md}px`,
+    "--token-radius-lg": `${tokens.radius.lg}px`,
+    "--token-shadow-focus": tokens.shadows.focus,
+    "--token-shadow-overlay": tokens.shadows.overlay,
+  };
+
+  return style as CSSProperties;
 }
